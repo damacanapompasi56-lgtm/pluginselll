@@ -1,0 +1,29 @@
+name: build
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -A x64
+
+      - name: DSP self-test (kirilirsa CI kirmizi)
+        run: |
+          cmake --build build --config Release --target SelfTest
+          ctest --test-dir build -C Release --output-on-failure
+
+      - name: Build VST3 + Standalone (Release)
+        run: cmake --build build --config Release --target MadenciTune_VST3 MadenciTune_Standalone --parallel
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MADENCITUNE-windows
+          path: |
+            build/MadenciTune_artefacts/Release/VST3/
+            build/MadenciTune_artefacts/Release/Standalone/
+          if-no-files-found: error
