@@ -73,7 +73,7 @@ public:
         aAtk = 1.f - std::exp(-hopSec / 0.3f);
         aRel = 1.f - std::exp(-hopSec / 1.5f);
         n = decN = 0; decAcc = 0.f; decCnt = 0; prevX = 0.f; hopSumSq = hopSumD2 = 0.f; dcX = dcY = 0.f;
-        first = true; started = false; cPrev = 0; voiced = false; unv = 0; octCnt = 0; mi = 0;
+        first = true; started = false; cPrev = 0; voiced = false; unv = 0; jumpCnt = 0; jumpM = 0.f; mi = 0;
         haveTarget = hadGoal = false; glideLeft = glideTot = 0; corr = corr1 = 0.f; goal0 = 0.f; rhoPrev = 1.f; outsideMs = 0.f; vibCount = 0;
         runActive = false; markCount = 0; kPtr = 0; sNext = 0.0; lastPos = 0.0; vmix = 0.f; dens = 0.f; medInit = false;
         midiF = 0.f; key.prepare(sr);
@@ -111,6 +111,9 @@ public:
 private:
     static constexpr int kNone = -1000;
     static constexpr int kMarks = 256;
+    static constexpr float kJumpSemi = 7.f;   // bundan büyük perde sıçraması kJumpFrames ardışık kare doğrulanmadan kabul edilmez
+    static constexpr int   kJumpFrames = 4;
+    static constexpr float kJumpPen = 0.3f;   // aday seçiminde: 1 oktav uzaklık = bu kadar nsdf cezası (doğrusal, cent'te)
     struct Mark { double pos; float T0, Ts, Pn, g, b; };   // Pn: bir sonraki mark'a uzaklık, g: bypass ağırlığı, b: formant kayma oranı (1 = kaymaz)
     struct Pitch { float hz, conf; };
 
@@ -131,8 +134,8 @@ private:
 
     // perde takibi
     bool voiced = false;
-    int unv = 0, octCnt = 0, mi = 0;
-    float med[3] = { 0, 0, 0 }, track = 0.f, midiF = 0.f;
+    int unv = 0, jumpCnt = 0, mi = 0;
+    float med[5] = { 0, 0, 0, 0, 0 }, track = 0.f, midiF = 0.f, jumpM = 0.f;   // jumpCnt/jumpM: bekleyen büyük sıçrama adayı
 
     // hedef / düzeltme
     bool haveTarget = false, hadGoal = false;
@@ -227,20 +230,46 @@ private:
         float hi = 0.f;
         for (int k = 0; k < nk; ++k) if (keyPos[k] >= minLag) hi = std::fmax(hi, nsdf[(size_t) keyPos[k]]);
         if (hi < 0.3f) return out;
-        int pick = 0;
+        int pick = 0;   // klasik MPM seçimi (ilk tepe >= 0.9*hi): güven değeri hep bundan -> voiced kararı değişmez
         for (int k = 0; k < nk; ++k)
             if (keyPos[k] >= minLag && nsdf[(size_t) keyPos[k]] >= 0.9f * hi) { pick = keyPos[k]; break; }
         if (pick == 0) return out;
 
-        float del = 0.f;
-        {
-            const float a = nsdf[(size_t) pick - 1], b = nsdf[(size_t) pick], c = nsdf[(size_t) pick + 1];
-            const float den = a - 2.f * b + c;
-            if (den < -1e-9f) del = fclamp(0.5f * (a - c) / den, -1.f, 1.f);
+        // Takip varken: güçlü adaylar arasında önceki perdeye yakın olanı seç (cent mesafesine göre ceza).
+        // Eşitlikte kısa lag (küçük indeks) kazanır. Takip yoksa klasik seçim.
+        int sel = pick;
+        if (voiced && nk > 1) {
+            const float vmin = std::fmax(0.3f, 0.5f * hi);
+            float bs = -1e9f;
+            for (int k = 0; k < nk; ++k) {
+                const int p = keyPos[k];
+                const float v = nsdf[(size_t) p];
+                if (p < minLag || v < vmin) continue;
+                const float dm = std::fabs(69.f + 12.f * std::log2((float) srD / lagOf(p) / sRef) - track);
+                const float sc = v - kJumpPen * std::fmin(1.f, dm / 12.f);
+                if (sc > bs) { bs = sc; sel = p; }
+            }
         }
-        const float Tc = ((float) pick + del) * (float) d;
 
-        // ince arama (tam hız), pencere = son 2*Tmax örnek
+        float Tf, peak;
+        refineFine(lagOf(sel) * (float) d, Tf, peak);
+        out.hz = (float) sr / Tf;
+        out.conf = peak;
+        if (sel != pick) { float Tp, pp; refineFine(lagOf(pick) * (float) d, Tp, pp); out.conf = pp; }
+        return out;
+    }
+
+    // decimate nsdf'de tepenin parabolik interpolasyonlu lag'i
+    float lagOf(int p) const
+    {
+        const float a = nsdf[(size_t) p - 1], b = nsdf[(size_t) p], c = nsdf[(size_t) p + 1];
+        const float den = a - 2.f * b + c;
+        return (float) p + (den < -1e-9f ? fclamp(0.5f * (a - c) / den, -1.f, 1.f) : 0.f);
+    }
+
+    // ince arama (tam hız), pencere = son 2*Tmax örnek; Tc çevresinde +-(d+1) lag
+    void refineFine(float Tc, float& Tf, float& conf)
+    {
         const int W = 2 * Tmax;
         const i64 s0 = n - W;
         const int Lc = (int) std::lround(Tc);
@@ -256,16 +285,21 @@ private:
             nsdfF[(size_t) (l - lo)] = v;
             if (v > bestV) { bestV = v; bestL = l; }
         }
-        float Tf = (float) bestL, peak = bestV;
+        Tf = (float) bestL; float peak = bestV;
         if (bestL > lo && bestL < hi2) {
             const float a = nsdfF[(size_t) (bestL - lo - 1)], b = nsdfF[(size_t) (bestL - lo)], c = nsdfF[(size_t) (bestL - lo + 1)];
             const float den = a - 2.f * b + c;
             if (den < -1e-9f) { const float dl = fclamp(0.5f * (a - c) / den, -1.f, 1.f); Tf += dl; peak = b - 0.25f * (a - c) * dl; }
         }
         Tf = fclamp(Tf, 2.f, (float) Tmax);
-        out.hz = (float) sr / Tf;
-        out.conf = fclamp(peak, 0.f, 1.f);
-        return out;
+        conf = fclamp(peak, 0.f, 1.f);
+    }
+
+    static float median5(const float* a)
+    {
+        float t[5] = { a[0], a[1], a[2], a[3], a[4] };
+        for (int i = 1; i < 5; ++i) { const float v = t[i]; int j = i; while (j > 0 && t[j - 1] > v) { t[j] = t[j - 1]; --j; } t[j] = v; }
+        return t[2];
     }
 
     void updateDensity(float rmsDb, float bw, bool v)
@@ -363,16 +397,19 @@ private:
         const bool vNow = strong || (voiced && unv < 8);   // ~23 ms tutma: kısa güven düşüşlerinde wet/dry titremesi yok
         if (strong) {
             float m = 69.f + 12.f * std::log2(pd.hz / sRef);
-            if (!voiced) { med[0] = med[1] = med[2] = m; octCnt = 0; }
+            if (!voiced) { for (float& v : med) v = m; jumpCnt = 0; }
             else {
-                if (std::fabs(m - track) > 7.f) {          // oktav/büyük sıçrama koruması
-                    if (++octCnt < 10) m = track; else { octCnt = 0; med[0] = med[1] = med[2] = m; }
-                } else octCnt = 0;
-                med[mi] = m; mi = (mi + 1) % 3;
+                if (std::fabs(m - track) > kJumpSemi) {    // oktav/büyük sıçrama: ardışık ve birbirine yakın kJumpFrames kare doğrularsa kabul
+                    jumpCnt = (jumpCnt > 0 && std::fabs(m - jumpM) < 1.f) ? jumpCnt + 1 : 1;
+                    jumpM = m;
+                    if (jumpCnt >= kJumpFrames) { jumpCnt = 0; for (float& v : med) v = m; }
+                    else m = track;                        // tek/kısa sıçrama: son perdede kal
+                } else jumpCnt = 0;
+                med[mi] = m; mi = (mi + 1) % 5;
             }
             track = m;
-            midiF = std::fmax(std::fmin(med[0], med[1]), std::fmin(std::fmax(med[0], med[1]), med[2]));
-        }
+            midiF = median5(med);
+        } else jumpCnt = 0;   // güçlü olmayan kare sıçrama serisini böler ("üst üste" şartı); midiF son iyi perdede kalır (voiced tutma <= 8 kare ~ 23 ms)
         if (vNow && !voiced) { corr = corr1 = 0.f; haveTarget = hadGoal = false; vibCount = 0; outsideMs = 0.f; runActive = false; }
         if (!vNow && voiced) { haveTarget = hadGoal = false; runActive = false; }
         voiced = vNow;
