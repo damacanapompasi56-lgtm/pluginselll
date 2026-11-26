@@ -97,6 +97,9 @@ MadenciEditor::MadenciEditor (MadenciProcessor& p) : AudioProcessorEditor (&p), 
     noteLabel.setFont (Font (FontOptions (18.f)));
 
     addCombo (keyBox, keyAtt, "key"); addCombo (scaleBox, scaleAtt, "scale"); addCombo (rangeBox, rangeAtt, "range");
+    addCombo (formantBox, formantAtt, "formant");
+    formantLabel.setText ("Formant", dontSendNotification); addAndMakeVisible (formantLabel);
+    formantLabel.setColour (Label::textColourId, Colours::white);
     addAndMakeVisible (smartBtn); addAndMakeVisible (vibBtn);
     smartAtt = std::make_unique<BA> (proc.apvts, "smart", smartBtn);
     vibAtt = std::make_unique<BA> (proc.apvts, "vibOn", vibBtn);
@@ -129,7 +132,10 @@ void MadenciEditor::resized()
     r.removeFromTop (10);
     auto mid = r.removeFromTop (130);
     piano.setBounds (mid.removeFromLeft (490));
-    noteLabel.setBounds (mid.reduced (16, 0));
+    auto right = mid.reduced (16, 0);
+    auto fm = right.removeFromBottom (28);   // piyano satirinin sag alti: ust kisim Detected/Target yazisi
+    formantLabel.setBounds (fm.removeFromLeft (70)); formantBox.setBounds (fm.removeFromLeft (150));
+    noteLabel.setBounds (right);
 }
 
 static void drawMeter (Graphics& g, Rectangle<int> area, const String& name, float level)

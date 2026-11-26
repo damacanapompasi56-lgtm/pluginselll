@@ -34,11 +34,12 @@ private:
     MadenciProcessor& proc;
     juce::TextButton detectBtn { "Key Detect" };
     juce::Label keyLabel, noteLabel;
-    juce::ComboBox keyBox, scaleBox, rangeBox;
+    juce::ComboBox keyBox, scaleBox, rangeBox, formantBox;
+    juce::Label formantLabel;
     juce::ToggleButton smartBtn { "Smart Retune" }, vibBtn { "Vibrato" };
     Knob kRef, kSpeed, kGlide, kVib, kTolC, kTolT;
     Piano piano;
     float inLevel = 0.f, outLevel = 0.f;
-    std::unique_ptr<CA> keyAtt, scaleAtt, rangeAtt;
+    std::unique_ptr<CA> keyAtt, scaleAtt, rangeAtt, formantAtt;
     std::unique_ptr<BA> smartAtt, vibAtt;
 };

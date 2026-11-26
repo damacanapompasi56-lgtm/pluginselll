@@ -9,6 +9,8 @@ constexpr float kGlideMin = 0.f;       // Note Transition (ms)
 constexpr float kGlideMax = 400.f;
 constexpr float kRetuneMaxMs = 400.f;  // motorda etkin retune süresi her zaman 0..400
 constexpr float kSmartPadMs = 150.f;   // Smart Retune yumuşatma payı (en fazla)
+constexpr int   kFormantDefault = 0;   // Formant: 0 = Corrected (formantlar sabit), 1 = Not Corrected (formantlar perdeyle kayar)
+constexpr float kFormantSmoothMs = 50.f;   // Corrected <-> Not Corrected geçiş yumuşatma süresi
 
 constexpr float kRefMin = 415.f, kRefMax = 466.f, kRefDefault = 440.f;
 constexpr float kMinDetectHz = 70.f;   // en düşük Range (Generic) -> sabit gecikme buna göre

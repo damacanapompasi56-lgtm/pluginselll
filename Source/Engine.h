@@ -31,6 +31,7 @@ struct EngineParams {
     float refHz = kRefDefault, speed = 0.f, glideMs = 0.f, tolCents = 0.f, tolMs = 0.f, vibPct = 100.f;
     bool smart = false, vibOn = false;
     int range = kGenericRange;
+    bool formantCorrected = kFormantDefault == 0;
     unsigned mask = 0xFFF;  // izinli perde sınıfları, bit0 = C
 };
 
@@ -110,7 +111,7 @@ public:
 private:
     static constexpr int kNone = -1000;
     static constexpr int kMarks = 256;
-    struct Mark { double pos; float T0, Ts, Pn, g; };   // Pn: bir sonraki mark'a uzaklık, g: bypass ağırlığı
+    struct Mark { double pos; float T0, Ts, Pn, g, b; };   // Pn: bir sonraki mark'a uzaklık, g: bypass ağırlığı, b: formant kayma oranı (1 = kaymaz)
     struct Pitch { float hz, conf; };
 
     EngineParams P;
@@ -126,7 +127,7 @@ private:
 
     // yumuşatılmış parametreler
     bool first = true, started = false;
-    float sRef = kRefDefault, sSpeed = 0.f, sGlide = 0.f, sTolC = 0.f, sTolT = 0.f, sVib = 100.f;
+    float sRef = kRefDefault, sSpeed = 0.f, sGlide = 0.f, sTolC = 0.f, sTolT = 0.f, sVib = 100.f, sFmt = 0.f;   // sFmt: 0 Corrected .. 1 Not Corrected
 
     // perde takibi
     bool voiced = false;
@@ -279,7 +280,11 @@ private:
     void addMark(double pos, float T0, float Ts, float g)
     {
         if (markCount > 0 && runActive) mk(markCount - 1).Pn = (float) (pos - lastPos);
-        mk(markCount++) = Mark{ pos, T0, Ts, T0, g };
+        // Corrected (sFmt 0): b = 1, tane aynen okunur -> formantlar sabit (PSOLA zaten böyle). Not Corrected (sFmt 1): b = T0/Ts,
+        // tane perde oranı kadar hızlı okunur -> formantlar perdeyle kayar. Ara değerde log-doğrusal geçiş.
+        // shortcut: b >= T0/(Tmax+32), tane yarı genişliği T0/b gecikme payını (L) aşmasın; en düşük seslerde çok büyük aşağı kaymada formant kayması kısmi kalır
+        const float b = std::fmax(std::pow(T0 / Ts, sFmt), T0 / (float) (Tmax + 32));
+        mk(markCount++) = Mark{ pos, T0, Ts, T0, g, b };
         lastPos = pos;
     }
 
@@ -343,10 +348,12 @@ private:
 
         // parametre yumuşatma (zipper yok): ~20 ms, hop hızında
         const float a = first ? 1.f : 1.f - std::exp(-hopSec / 0.02f);
+        const float aF = first ? 1.f : 1.f - std::exp(-hopSec / (kFormantSmoothMs * 0.001f));
         first = false;
         sRef += a * (P.refHz - sRef);   sSpeed += a * (P.speed - sSpeed);
         sGlide += a * (P.glideMs - sGlide); sTolC += a * (P.tolCents - sTolC);
         sTolT += a * (P.tolMs - sTolT); sVib += a * (P.vibPct - sVib);
+        sFmt += aF * ((P.formantCorrected ? 0.f : 1.f) - sFmt);
         const float hardness = fclamp(sSpeed / kSpeedMin, 0.f, 1.f);  // 0..1, sadece Speed<0'da > 0
 
         // 1) perde + voiced
@@ -437,8 +444,26 @@ private:
 
     // Hann pencereli 2T tane: m.pos çevresinden okunur, s'e (kesirli) yerleştirilir. Kesirli kaydırma 8 noktalı
     // pencereli sinc ile (katsayılar tane başına bir kez); ofset sıfırsa katsayılar delta -> birebir kopya.
+    // Formant kaymalı tane (Not Corrected): giriş m.b kat hızlı okunur (kübik Catmull-Rom), pencere çıkış alanında T0/b.
+    // b = 1 ise grain() eski yolu kullanır (birebir kopya korunur). shortcut: b > 1'de bant sınırlama yok, >Nyquist/b enerji katlanır; vokalde ihmal edilebilir.
+    void grainRs(const Mark& m, double s)
+    {
+        const float b = m.b, h = std::max(2.f, m.T0 / b);
+        const i64 q0 = (i64) std::ceil(s - (double) h), q1 = (i64) std::floor(s + (double) h);
+        for (i64 q = q0; q <= q1; ++q) {
+            const double x = m.pos + (double) b * ((double) q - s);
+            const i64 i0 = (i64) std::floor(x);
+            const float t = (float) (x - (double) i0);
+            const float y0 = in[(size_t) ((i0 - 1) & mask)], y1 = in[(size_t) (i0 & mask)], y2 = in[(size_t) ((i0 + 1) & mask)], y3 = in[(size_t) ((i0 + 2) & mask)];
+            const float v = y1 + 0.5f * t * (y2 - y0 + t * (2.f * y0 - 5.f * y1 + 4.f * y2 - y3 + t * (3.f * (y1 - y2) + y3 - y0)));
+            const float w = 0.5f * (1.f + std::cos(kPi * (float) ((double) q - s) / h));
+            acc[(size_t) (q & mask)] += w * v; accW[(size_t) (q & mask)] += w;
+        }
+    }
+
     void grain(const Mark& m, double s)
     {
+        if (std::fabs(m.b - 1.f) > 1e-6f) { grainRs(m, s); return; }
         const float h = std::max(2.f, m.T0);
         const double dl = m.pos - s;
         const i64 p0 = (i64) std::floor(dl);

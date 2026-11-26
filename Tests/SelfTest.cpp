@@ -2,6 +2,8 @@
 // argv[1] verilirse önce/sonra WAV'larını oraya yazar (CI artifact).
 #include "Engine.h"
 #include <algorithm>
+#include <chrono>
+#include <complex>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -262,6 +264,106 @@ static void keyDetectTest(double sr)
           "secili key/duzeltme analizi etkiliyor: %d %%%d vs %d %%%d", e0.keyResult.load(), e0.keyConf.load(), e1.keyResult.load(), e1.keyConf.load());
 }
 
+// ---------- Formant: Corrected (formantlar sabit) / Not Corrected (formantlar perdeyle kayar) ----------
+// Bağımsız ölçüm (motor LPC kullanmaz): 4'e bölünmüş sinyalde 10. derece LPC (Levinson, pencere başına ortalama otokorelasyon),
+// kutup frekanslarından ilk ikisi = F1, F2. Kutuplar 0..sr/8'de toplansın diye boxcar ile bölünür; yoksa yüksek frekans gürültüsüne harcanır.
+static void formantsHz(const std::vector<float>& y0, size_t a0, size_t b0, double sr0, double& f1, double& f2)
+{
+    std::vector<float> y;
+    for (size_t i = a0 / 4; i + 1 < b0 / 4; ++i) { float t = 0; for (int k = 0; k < 4; ++k) t += y0[i * 4 + (size_t) k]; y.push_back(t / 4.f); }
+    const double sr = sr0 / 4; const int P = 10, W = (int) (0.03 * sr), hop = W / 2;
+    std::vector<double> r((size_t) P + 1, 0.0), w((size_t) W), z((size_t) W);
+    for (int i = 0; i < W; ++i) w[(size_t) i] = 0.5 - 0.5 * std::cos(kPi2 * (i + 0.5) / W);
+    for (size_t s = 0; s + (size_t) W + 1 <= y.size(); s += (size_t) hop) {
+        for (int i = 0; i < W; ++i) z[(size_t) i] = w[(size_t) i] * ((double) y[s + (size_t) i + 1] - 0.97 * (double) y[s + (size_t) i]);
+        for (int k = 0; k <= P; ++k) { double t = 0; for (int i = k; i < W; ++i) t += z[(size_t) i] * z[(size_t) (i - k)]; r[(size_t) k] += t; }
+    }
+    r[0] *= 1.0001;
+    std::vector<double> A((size_t) P + 1, 0.0), tmp; A[0] = 1.0; double e = r[0];
+    for (int i = 1; i <= P; ++i) {
+        double acc = r[(size_t) i]; for (int j = 1; j < i; ++j) acc += A[(size_t) j] * r[(size_t) (i - j)];
+        const double k = -acc / e; tmp = A;
+        for (int j = 1; j < i; ++j) A[(size_t) j] = tmp[(size_t) j] + k * tmp[(size_t) (i - j)];
+        A[(size_t) i] = k; e *= 1.0 - k * k;
+    }
+    using Cx = std::complex<double>;                       // A(z) kökleri: Durand-Kerner
+    std::vector<Cx> q((size_t) P);
+    for (int i = 0; i < P; ++i) q[(size_t) i] = std::pow(Cx(0.4, 0.9), i);
+    for (int it = 0; it < 500; ++it)
+        for (int i = 0; i < P; ++i) {
+            Cx num = 1.0, den = 1.0;
+            for (int k = 1; k <= P; ++k) num = num * q[(size_t) i] + A[(size_t) k];
+            for (int j = 0; j < P; ++j) if (j != i) den *= q[(size_t) i] - q[(size_t) j];
+            q[(size_t) i] -= num / den;
+        }
+    std::vector<double> fr;
+    for (const Cx& c : q) if (c.imag() > 0) { const double f = std::atan2(c.imag(), c.real()) * sr / kPi2, bw = -std::log(std::abs(c)) * sr / (kPi2 / 2); if (f > 150 && bw < 700) fr.push_back(f); }
+    std::sort(fr.begin(), fr.end());
+    f1 = fr.size() > 0 ? fr[0] : 0; f2 = fr.size() > 1 ? fr[1] : 0;
+}
+
+static void formantTest(double sr, const std::string& dir, const std::string& tag)
+{
+    struct Case { const char* name; double f0, tgt; unsigned mask; };
+    // yukarı: 170 Hz -> A3 220 Hz (x1.29, +4.4 yt); aşağı: 220 Hz -> E3 164.8 Hz (x0.75, -5 yt). Tek perde sınıfı açık -> hedef kesin.
+    const Case cases[] = { { "yukari", 170.0, 220.0, 1u << 9 }, { "asagi", 220.0, 164.8138, 1u << 4 } };
+    for (const Case& c : cases) {
+        const std::vector<Seg> sg = { { 0.2, 0, 0, 0, 0, 0 }, { 3.0, 1, c.f0, c.f0, 0, 0 }, { 0.2, 0, 0, 0, 0, 0 } };
+        const std::vector<float> x = vocal(sr, sg);
+        wav(dir, std::string("once_formant_") + c.name + "_" + tag + ".wav", x, sr);
+        const size_t a = (size_t) (1.2 * sr), b = (size_t) (3.0 * sr), win = (size_t) (0.06 * sr);
+        double i1, i2; formantsHz(x, a, b, sr, i1, i2);
+        const double ratio = c.tgt / c.f0;
+        for (bool corrected : { true, false }) {
+            EngineParams p; p.mask = c.mask; p.speed = 0.f; p.formantCorrected = corrected;
+            const std::vector<float> y = run(p, sr, x);
+            double o1, o2; formantsHz(y, a, b, sr, o1, o2);
+            const double r1 = o1 / i1, r2 = o2 / i2, want = corrected ? 1.0 : ratio;
+            const double pc = cents(acfHz(&y[(size_t) (2.0 * sr)], win, sr, c.tgt), c.tgt);
+            std::printf("formant %-6s %-13s sr=%6.0f  F1 %.0f->%.0f (x%.3f)  F2 %.0f->%.0f (x%.3f)  beklenen x%.3f  perde %.1f cent\n",
+                        c.name, corrected ? "Corrected" : "Not Corrected", sr, i1, o1, r1, i2, o2, r2, want, pc);
+            CHECK(i1 > 0 && o1 > 0 && i2 > 0 && o2 > 0, "formant %s sr=%.0f: tepe bulunamadi", c.name, sr);
+            CHECK(std::fabs(r1 / want - 1.0) <= 0.05 && std::fabs(r2 / want - 1.0) <= 0.05,
+                  "formant %s %s sr=%.0f: F1 x%.3f F2 x%.3f, beklenen x%.3f ±%%5", c.name, corrected ? "Corrected" : "Not Corrected", sr, r1, r2, want);
+            CHECK(std::fabs(pc) <= 10.0, "formant %s %s sr=%.0f: perde %.1f cent > 10", c.name, corrected ? "Corrected" : "Not Corrected", sr, pc);
+            wav(dir, std::string("sonra_formant_") + c.name + (corrected ? "_corrected_" : "_notcorrected_") + tag + ".wav", y, sr);
+        }
+    }
+}
+
+// Mod geçişi: sesli bölgenin ortasında Corrected -> Not Corrected -> Corrected. Patlama yok: örnek farkı iki sabit modun en kötüsünü %25'ten fazla aşmasın.
+static void formantSwitchTest(double sr, const std::string& dir, const std::string& tag)
+{
+    const std::vector<Seg> sg = { { 0.2, 0, 0, 0, 0, 0 }, { 3.0, 1, 170, 170, 0, 0 }, { 0.2, 0, 0, 0, 0, 0 } };
+    const std::vector<float> x = vocal(sr, sg);
+    EngineParams p; p.mask = 1u << 9; p.speed = 0.f;
+    p.formantCorrected = true;  const double dC = maxDiff(run(p, sr, x));
+    p.formantCorrected = false; const double dN = maxDiff(run(p, sr, x));
+    Engine e; e.prepare(sr); std::vector<float> y(x.size());
+    for (size_t i = 0; i < x.size(); ++i) {
+        if (i % 64 == 0) { p.formantCorrected = !(i >= (size_t) (1.2 * sr) && i < (size_t) (2.0 * sr)); e.set(p); }
+        y[i] = e.process(x[i]);
+    }
+    const double d = maxDiff(y), lim = 1.25 * std::max(dC, dN);
+    std::printf("formant gecisi  sr=%6.0f  max|dy| = %.4f  (sabit modlar: %.4f / %.4f)\n", sr, d, dC, dN);
+    CHECK(d <= lim, "formant gecisi sr=%.0f: max|dy| %.4f > %.4f (patlama)", sr, d, lim);
+    wav(dir, "sonra_formant_gecis_" + tag + ".wav", y, sr);
+}
+
+// CPU: Not Corrected (en pahalı yol), 10 sn vokal; gerçek zamanın %10'unu geçmesin (CI Release).
+static void formantCpuTest(double sr)
+{
+    const std::vector<Seg> sg = { { 0.2, 0, 0, 0, 0, 0 }, { 5.0, 1, 200, 246, 25, 0 }, { 0.2, 0, 0, 0, 0, 0 }, { 5.0, 1, 300, 180, 25, 1 } };
+    const std::vector<float> x = vocal(sr, sg);
+    EngineParams p; p.mask = 1u << 0; p.speed = 0.f; p.formantCorrected = false;
+    const auto t0 = std::chrono::steady_clock::now();
+    const std::vector<float> y = run(p, sr, x);
+    const double sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), cpu = 100.0 * sec / ((double) x.size() / sr);
+    std::printf("formant CPU (Not Corrected)  sr=%6.0f  %.2f %% tek cekirdek\n", sr, cpu);
+    CHECK(cpu <= 10.0, "formant CPU sr=%.0f: %.2f %% > 10", sr, cpu);
+    CHECK(!y.empty() && std::isfinite((double) y[y.size() / 2]), "formant CPU sr=%.0f: cikis gecersiz", sr);
+}
+
 int main(int argc, char** argv)
 {
     const std::string dir = argc > 1 ? argv[1] : "";
@@ -310,6 +412,10 @@ int main(int argc, char** argv)
             if (sp == 0.f) { wav(dir, "once_giris_" + tag + ".wav", x, sr); wav(dir, "sonra_cikis_speed0_" + tag + ".wav", y, sr); }
             else wav(dir, "sonra_cikis_speed40_" + tag + ".wav", y, sr);
         }
+    }
+    for (double sr : { 44100.0, 48000.0 }) {
+        const std::string tag = std::to_string((int) sr);
+        formantTest(sr, dir, tag); formantSwitchTest(sr, dir, tag); formantCpuTest(sr);
     }
     for (double sr : { 44100.0, 48000.0 }) keyDetectTest(sr);
     std::printf(fails ? "SELFTEST FAILED\n" : "SELFTEST OK\n");
