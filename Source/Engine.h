@@ -41,6 +41,8 @@ public:
     std::atomic<float> dispMidi{ -1.f };   // algılanan perde (MIDI, ref'e göre), <0 = yok
     std::atomic<int>   dispTarget{ -1 };   // hedef MIDI notası, -1 = yok
     std::atomic<float> dispCorr{ 0.f };    // uygulanan düzeltme (yarım ton); CI eğri testi okur
+    std::atomic<float> dispIntensity{ 0.5f };  // Smart Retune yoğunluğu 0..1 (0.5 = nötr)
+    std::atomic<float> dispEffSpeed{ 0.f };    // etkin retune süresi (ms), 0..400
     std::atomic<bool>  keyRequest{ false };
     std::atomic<int>   keyState{ 0 };      // 0 boşta, 1 dinliyor, 2 bitti
     std::atomic<int>   keyResult{ -1 };    // 0..11 major, 12..23 minor, -1 = hiç sesli nota yok
@@ -72,10 +74,13 @@ public:
         dcR = 1.f - 6.2831853f * 20.f / (float) sr;               // DC blocker ~20 Hz
         aAtk = 1.f - std::exp(-hopSec / 0.3f);
         aRel = 1.f - std::exp(-hopSec / 1.5f);
+        aSm = 1.f - std::exp(-hopSec / 0.05f);        // yoğunluk özellikleri: ~50 ms kısa süreli ortalama
+        histDecay = std::exp(-hopSec / 30.f);         // voiced geçmişi: ~30 sn
         n = decN = 0; decAcc = 0.f; decCnt = 0; prevX = 0.f; hopSumSq = hopSumD2 = 0.f; dcX = dcY = 0.f;
         first = true; started = false; cPrev = 0; voiced = false; unv = 0; jumpCnt = 0; jumpM = 0.f; mi = 0;
         haveTarget = hadGoal = false; glideLeft = glideTot = 0; corr = corr1 = 0.f; goal0 = 0.f; rhoPrev = 1.f; outsideMs = 0.f; vibCount = 0;
-        runActive = false; markCount = 0; kPtr = 0; sNext = 0.0; lastPos = 0.0; vmix = 0.f; dens = 0.f; medInit = false;
+        runActive = false; markCount = 0; kPtr = 0; sNext = 0.0; lastPos = 0.0; vmix = 0.f; dens = densS = 0.5f; medInit = false; histMass = 0.f;
+        for (auto& h : hist) for (float& v : h) v = 0.f;
         midiF = 0.f; key.prepare(sr);
     }
 
@@ -147,7 +152,10 @@ private:
     int vibIdx = 0, vibCount = 0;
 
     // yoğunluk
-    float dens = 0.f, medTrack = 0.f;
+    // Üç özellik (RMS dB, parlaklık Hz, medyan perdeye göre yükseklik st) vokalin kendi son ~30 sn voiced geçmişine göre 0..1'e eşlenir.
+    static constexpr int kBins = 64;
+    float dens = 0.5f, densS = 0.5f, medTrack = 0.f;   // densS: yumuşatılmış, dens: smoothstep'ten geçmiş (tau'da kullanılan)
+    float hist[3][kBins] = {}, histMass = 0.f, histDecay = 1.f, fSm[3] = {}, aSm = 0.f;   // sönümlü histogramlar, toplam ağırlık
     bool medInit = false;
 
     // PSOLA
@@ -302,13 +310,46 @@ private:
         return t[2];
     }
 
-    void updateDensity(float rmsDb, float bw, bool v)
+    // Yalnız voiced karelerde çağrılır; voiced yokken hiç çağrılmaz -> yoğunluk son değerini tutar.
+    void updateDensity(float rmsDb, float bw)
     {
-        const float loud = fclamp((rmsDb + 45.f) / 30.f, 0.f, 1.f);
-        const float bright = fclamp((bw - 500.f) / 2500.f, 0.f, 1.f);  // rms-frekans, centroid vekili
-        const float height = v ? fclamp(0.5f + (midiF - medTrack) / 6.f, 0.f, 1.f) : 0.5f;
-        const float raw = rmsDb < -55.f ? 0.f : 0.5f * loud + 0.2f * bright + 0.3f * height;
-        dens += (raw > dens ? aAtk : aRel) * (raw - dens);  // attack hızlı, release yavaş
+        constexpr float lo[3] = { -70.f, 0.f, -12.f }, hi[3] = { 0.f, 4000.f, 12.f };
+        constexpr float minSpan[3] = { 3.f, 150.f, 0.75f };   // P90-P10 bundan darsa özellik ayırt etmez -> nötr 0.5
+        constexpr float wgt[3] = { 0.5f, 0.25f, 0.25f };      // RMS en ağır
+        const float x[3] = { std::pow(10.f, 0.1f * rmsDb), bw, midiF - medTrack };   // RMS enerji alanında ortalanır
+        for (int k = 0; k < 3; ++k) fSm[k] = histMass == 0.f ? x[k] : fSm[k] + aSm * (x[k] - fSm[k]);
+        const float f[3] = { 10.f * std::log10(fSm[0] + 1e-12f), fSm[1], fSm[2] };
+
+        histMass = histMass * histDecay + 1.f;
+        float s = 0.f;
+        for (int k = 0; k < 3; ++k) {
+            float* h = hist[k];
+            for (int i = 0; i < kBins; ++i) h[i] *= histDecay;
+            h[std::min(kBins - 1, (int) ((fclamp(f[k], lo[k], hi[k]) - lo[k]) / (hi[k] - lo[k]) * (float) kBins))] += 1.f;
+            auto pct = [&](float q) -> float {   // sönümlü histogramdan q. yüzdelik, bin içinde doğrusal
+                const float tgt = q * histMass; float cum = 0.f;
+                for (int i = 0; i < kBins; ++i) {
+                    if (cum + h[i] >= tgt) return lo[k] + (hi[k] - lo[k]) * ((float) i + (h[i] > 0.f ? (tgt - cum) / h[i] : 0.f)) / (float) kBins;
+                    cum += h[i];
+                }
+                return hi[k];
+            };
+            const float p10 = pct(0.1f), p90 = pct(0.9f);
+            s += wgt[k] * (p90 - p10 >= minSpan[k] ? fclamp((f[k] - p10) / (p90 - p10), 0.f, 1.f) : 0.5f);
+        }
+        // geçmiş yetersizken (< ~2 sn voiced) nötr 0.5; ~5 sn'ye kadar yumuşak geçiş
+        const float warm = fclamp((histMass * hopSec - 2.f) / 3.f, 0.f, 1.f);
+        const float raw = 0.5f + warm * (s - 0.5f);
+        densS += (raw > densS ? aAtk : aRel) * (raw - densS);   // attack ~300 ms, release ~1.5 sn
+        dens = densS * densS * (3.f - 2.f * densS);               // smoothstep: kontrast
+    }
+
+    // Etkin retune süresi (ms). Smart kapalıyken eski davranış: max(0, Speed).
+    float effTau() const
+    {
+        float t = std::fmax(0.f, sSpeed);
+        if (P.smart) t += (1.f - dens) * kSmartPadMs;
+        return fclamp(t, 0.f, kRetuneMaxMs);
     }
 
     void addMark(double pos, float T0, float Ts, float g)
@@ -419,7 +460,7 @@ private:
         if (voiced) {
             if (!medInit) { medTrack = midiF; medInit = true; }
             medTrack += (midiF > medTrack ? 1.f : -1.f) * 0.005f;
-            updateDensity(rmsDb, bw, true);
+            updateDensity(rmsDb, bw);
 
             if (vibCount == 0) { for (int i = 0; i < vibN; ++i) vibBuf[i] = midiF; vibSum = midiF * (float) vibN; vibIdx = 0; vibCount = 1; }
             vibSum += midiF - vibBuf[vibIdx]; vibBuf[vibIdx] = midiF; vibIdx = (vibIdx + 1) % vibN;
@@ -453,9 +494,7 @@ private:
                     want = (goal - midiF) + vs * fclamp(midiF - center, -1.f, 1.f);
                     want = fclamp(want, -12.f, 12.f);
                 }
-                float tau = std::fmax(0.f, sSpeed);              // Speed<0 -> taban 0 ms
-                if (P.smart) tau += (1.f - dens) * kSmartPadMs;
-                tau = fclamp(tau, 0.f, kRetuneMaxMs);
+                const float tau = effTau();                      // Speed<0 -> taban 0 ms
                 // 2 kademeli (kritik sönümlü) süzgeç: geçiş S eğrisiyle başlar (tek kutup ilk hop'ta en dik, kesik duyulur).
                 // Kademe başına 0.6*tau -> %63 ve %90 noktaları eski tek kutupla aynı: Speed hissi değişmez. tau=0 -> al=1 -> sert.
                 const float al = tau <= 0.f ? 1.f : 1.f - std::exp(-hopMs / (0.6f * tau));
@@ -469,7 +508,7 @@ private:
                 makeMarks(c, T0, Ts, fclamp(1.f - std::fabs(corr) / 0.05f, 0.f, 1.f), tau > 0.f);   // |düzeltme| < 5 cent: giriş periyodunu izle
                 active = true;
             } else hadGoal = false;
-        } else updateDensity(rmsDb, bw, false);
+        }
 
         if (!active) runActive = false;
         for (i64 p = cPrev + 1; p <= c; ++p) vmask[(size_t) (p & mask)] = active ? 1.f : 0.f;
@@ -477,6 +516,8 @@ private:
         dispMidi.store(voiced ? midiF : -1.f);
         dispTarget.store(active ? target : -1);
         dispCorr.store(active ? corr : 0.f);
+        dispIntensity.store(dens);
+        dispEffSpeed.store(effTau());
     }
 
     // Hann pencereli 2T tane: m.pos çevresinden okunur, s'e (kesirli) yerleştirilir. Kesirli kaydırma 8 noktalı
