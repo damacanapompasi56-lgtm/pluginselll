@@ -134,6 +134,54 @@ static void checkSine(const char* name, EngineParams p, double sr, bool fm)
 }
 
 
+// ---------- nota geçişi: A3 -> B3 kayması (A#3'ten geçer); düzeltme eğrisi doğrudan okunur ----------
+// Engine'in uyguladığı düzeltme (dispCorr) hop başına (128 örnek, <=48 kHz) bir örnek alınır, cent cinsinden; aktif değilse NaN.
+// Sesten ölçmek burada işe yaramaz: perde analizcisi 100 cent'lik sert basamağı ~8 hop'a yayıyor, Speed 0 / 100 ayırt edilemez.
+static std::vector<float> runCurve(const EngineParams& p, double sr, const std::vector<float>& x, std::vector<double>& curve)
+{
+    Engine e; e.prepare(sr); e.set(p);
+    std::vector<float> y(x.size()); curve.clear();
+    for (size_t i = 0; i < x.size(); ++i) {
+        y[i] = e.process(x[i]);
+        if ((i + 1) % 128 == 0) curve.push_back(e.dispTarget.load() >= 0 ? 100.0 * (double) e.dispCorr.load() : std::nan(""));
+    }
+    return y;
+}
+// ardışık iki hop arasındaki en büyük düzeltme sıçraması (cent); yalnız ikisi de aktifse
+static double maxJump(const std::vector<double>& c) { double m = 0; for (size_t i = 1; i < c.size(); ++i) if (!std::isnan(c[i]) && !std::isnan(c[i - 1])) m = std::max(m, std::fabs(c[i] - c[i - 1])); return m; }
+
+static void transitionTest(double sr, const std::string& dir, const std::string& tag)
+{
+    const std::vector<Seg> s = { { 0.2, 0, 0, 0, 0, 0 }, { 1.0, 1, 215, 215, 0, 0 }, { 0.12, 1, 215, 250, 0, 0 },
+                                 { 1.0, 1, 250, 250, 0, 0 }, { 0.3, 0, 0, 0, 0, 0 } };
+    const std::vector<float> x = vocal(sr, s);
+    wav(dir, "once_gecis_" + tag + ".wav", x, sr);
+    std::vector<double> c;
+
+    // Speed 0: sert kalmalı (nota basamağı >= 60 cent) ve plato'larda hedefe ±10 cent (A3 220 Hz, B3 246.94 Hz)
+    {
+        EngineParams p; p.mask = 0xFFF; p.speed = 0.f;
+        const std::vector<float> y = runCurve(p, sr, x, c);
+        double worst = 0; const size_t win = (size_t) (0.06 * sr);
+        for (size_t a = (size_t) (0.7 * sr); a + win < (size_t) (1.2 * sr); a += win / 2) worst = std::max(worst, std::fabs(cents(acfHz(&y[a], win, sr, 220.0), 220.0)));
+        for (size_t a = (size_t) (1.6 * sr); a + win < (size_t) (2.28 * sr); a += win / 2) worst = std::max(worst, std::fabs(cents(acfHz(&y[a], win, sr, 246.94), 246.94)));
+        const double j = maxJump(c);
+        std::printf("gecis Speed 0   sr=%6.0f  hedefe en kotu sapma = %.2f cent, egri sicramasi = %.1f cent/hop\n", sr, worst, j);
+        CHECK(worst <= 10.0, "gecis Speed 0 sr=%.0f: hedefe %.2f cent > 10", sr, worst);
+        CHECK(j >= 60.0, "gecis Speed 0 sr=%.0f: sert degil, sicrama %.1f cent < 60", sr, j);
+        wav(dir, "sonra_gecis_speed0_" + tag + ".wav", y, sr);
+    }
+    // Speed 100: düzeltme eğrisinde ani sıçrama yok (basamak yok)
+    {
+        EngineParams p; p.mask = 0xFFF; p.speed = 100.f;
+        const std::vector<float> y = runCurve(p, sr, x, c);
+        const double j = maxJump(c);
+        std::printf("gecis Speed 100 sr=%6.0f  egri sicramasi = %.2f cent/hop\n", sr, j);
+        CHECK(j <= 5.0, "gecis Speed 100 sr=%.0f: egri sicramasi %.2f cent/hop > 5", sr, j);
+        wav(dir, "sonra_gecis_speed100_" + tag + ".wav", y, sr);
+    }
+}
+
 // ---------- Key Detect: 24 ton, sentetik melodi; plugin'de FARKLI key seçili + düzeltme AÇIK ----------
 // Melodi: ~3 nota/sn, tonik üçlüsüne (özellikle tonik) çekilen basamaklı yürüyüş; cümle başı/sonları çoğunlukla (ama her zaman değil) tonik, 20 cent vibrato,
 // tonun kendine göre -20..+20 cent kayması (tuning offset testi).
@@ -250,6 +298,8 @@ int main(int argc, char** argv)
             std::printf("bypass (oran 1.0)               sr=%6.0f  fark = %.1f dB\n", sr, db);
             CHECK(db < -80.0, "bypass sr=%.0f: %.1f dB (> -80)", sr, db);
         }
+        transitionTest(sr, dir, tag);
+
         // 3) süreksizlik: ardışık örnek farkı girişin 1.5 katını geçmesin (Speed 0 ve 40 ms)
         for (float sp : { 0.f, 40.f }) {
             EngineParams p; p.mask = 0xFFF; p.speed = sp;

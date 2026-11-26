@@ -39,6 +39,7 @@ public:
     // UI okur (atomik)
     std::atomic<float> dispMidi{ -1.f };   // algılanan perde (MIDI, ref'e göre), <0 = yok
     std::atomic<int>   dispTarget{ -1 };   // hedef MIDI notası, -1 = yok
+    std::atomic<float> dispCorr{ 0.f };    // uygulanan düzeltme (yarım ton); CI eğri testi okur
     std::atomic<bool>  keyRequest{ false };
     std::atomic<int>   keyState{ 0 };      // 0 boşta, 1 dinliyor, 2 bitti
     std::atomic<int>   keyResult{ -1 };    // 0..11 major, 12..23 minor, -1 = hiç sesli nota yok
@@ -72,7 +73,7 @@ public:
         aRel = 1.f - std::exp(-hopSec / 1.5f);
         n = decN = 0; decAcc = 0.f; decCnt = 0; prevX = 0.f; hopSumSq = hopSumD2 = 0.f; dcX = dcY = 0.f;
         first = true; started = false; cPrev = 0; voiced = false; unv = 0; octCnt = 0; mi = 0;
-        haveTarget = hadGoal = false; glideLeft = 0; corr = 0.f; outsideMs = 0.f; vibCount = 0;
+        haveTarget = hadGoal = false; glideLeft = glideTot = 0; corr = corr1 = 0.f; goal0 = 0.f; rhoPrev = 1.f; outsideMs = 0.f; vibCount = 0;
         runActive = false; markCount = 0; kPtr = 0; sNext = 0.0; lastPos = 0.0; vmix = 0.f; dens = 0.f; medInit = false;
         midiF = 0.f; key.prepare(sr);
     }
@@ -134,8 +135,8 @@ private:
 
     // hedef / düzeltme
     bool haveTarget = false, hadGoal = false;
-    int target = 0, lastTarget = 0, glideLeft = 0;
-    float goal = 0.f, corr = 0.f, outsideMs = 0.f;
+    int target = 0, lastTarget = 0, glideLeft = 0, glideTot = 0;
+    float goal = 0.f, goal0 = 0.f, corr = 0.f, corr1 = 0.f, rhoPrev = 1.f, outsideMs = 0.f;   // corr1: 2. kademe ön süzgeç, rhoPrev: önceki hop'un Ts/T0 oranı
 
     // vibrato merkezi (kayan ortalama)
     float vibBuf[128] = {}, vibSum = 0.f;
@@ -285,12 +286,13 @@ private:
     // Tutarlı pitch mark'lar: yeni mark = önceki + ölçülmüş periyot. Periyot, önceki mark çevresindeki
     // T0 uzunluklu parçanın T0+-%12 gecikmedeki kopyasıyla normalize korelasyonundan (parabolik) bulunur.
     // Ham örnek tepesi seçilmez -> ardışık taneler aynı dalga fazında, tane dikişi kayması yok.
-    void makeMarks(i64 c, float T0, float Ts, float g)
+    void makeMarks(i64 c, float T0, float Ts, float g, bool soft)
     {
+        const float rho = Ts / T0;                          // düzeltme oranı (cent alanında log)
         if (!runActive) {                                   // yeni sesli bölge: ilk mark = ilk periyottaki tepe
             i64 best = c; float bv = -1e9f;
             for (i64 p = c; p < c + (i64) T0; ++p) { const float v = ain[(size_t) (p & mask)]; if (v > bv) { bv = v; best = p; } }
-            runActive = true;
+            runActive = true; rhoPrev = rho;
             sNext = (double) best;                          // sentez ağı ilk mark'a hizalı başlar (d = 0)
             addMark((double) best, T0, Ts, g);
         }
@@ -319,8 +321,13 @@ private:
                     if (den < -1e-9f) P += (double) fclamp(0.5f * (a - cc) / den, -1.f, 1.f);
                 }
             }
-            addMark(lastPos + P, T0, Ts, g);
+            // hop içinde oranı geometrik (= cent'te doğrusal) enterpole et: düzeltme 3 ms'de bir basamaklanmasın.
+            // T0'a oran uygulanır (Ts'e değil): oran 1 iken Ts == T0 -> bypass birebir kopya kalır. Speed 0 (soft=false) sert.
+            float ro = rho;
+            if (soft && rho != rhoPrev) ro = rhoPrev * std::pow(rho / rhoPrev, fclamp((float) ((lastPos + P - (double) (c - H)) / (double) H), 0.f, 1.f));
+            addMark(lastPos + P, T0, T0 * ro, g);
         }
+        rhoPrev = rho;
     }
 
     void analyse()
@@ -359,7 +366,7 @@ private:
             track = m;
             midiF = std::fmax(std::fmin(med[0], med[1]), std::fmin(std::fmax(med[0], med[1]), med[2]));
         }
-        if (vNow && !voiced) { corr = 0.f; haveTarget = hadGoal = false; vibCount = 0; outsideMs = 0.f; runActive = false; }
+        if (vNow && !voiced) { corr = corr1 = 0.f; haveTarget = hadGoal = false; vibCount = 0; outsideMs = 0.f; runActive = false; }
         if (!vNow && voiced) { haveTarget = hadGoal = false; runActive = false; }
         voiced = vNow;
 
@@ -382,12 +389,13 @@ private:
             else if (cand != target && std::fabs(mSel - (float) cand) + 0.25f < std::fabs(mSel - (float) target)) target = cand;  // histerezis
 
             if (haveTarget) {
-                if (!hadGoal) { goal = (float) target; lastTarget = target; glideLeft = 0; hadGoal = true; }
+                if (!hadGoal) { goal = (float) target; lastTarget = target; glideLeft = glideTot = 0; hadGoal = true; }
                 else if (target != lastTarget) {
                     const float g = fclamp(sGlide, kGlideMin, kGlideMax) * (1.f - hardness);  // sertlikle glide -> 0
-                    glideLeft = (int) std::lround(g / hopMs); lastTarget = target;
+                    glideLeft = glideTot = (int) std::lround(g / hopMs); goal0 = goal; lastTarget = target;
                 }
-                if (glideLeft > 0) { goal += ((float) target - goal) / (float) glideLeft; --glideLeft; }
+                // glide: yarım kosinüs (iki ucunda eğim 0), doğrusal rampanın köşeleri yok; süre aynı
+                if (glideLeft > 0) { --glideLeft; goal = goal0 + ((float) target - goal0) * 0.5f * (1.f - std::cos(kPi * (1.f - (float) glideLeft / (float) glideTot))); }
                 else goal = (float) target;
 
                 // tolerans: cent ölü bölgesi + süre gecikmesi
@@ -404,14 +412,17 @@ private:
                 float tau = std::fmax(0.f, sSpeed);              // Speed<0 -> taban 0 ms
                 if (P.smart) tau += (1.f - dens) * kSmartPadMs;
                 tau = fclamp(tau, 0.f, kRetuneMaxMs);
-                const float al = tau <= 0.f ? 1.f : 1.f - std::exp(-hopMs / tau);
-                corr += al * (want - corr);
+                // 2 kademeli (kritik sönümlü) süzgeç: geçiş S eğrisiyle başlar (tek kutup ilk hop'ta en dik, kesik duyulur).
+                // Kademe başına 0.6*tau -> %63 ve %90 noktaları eski tek kutupla aynı: Speed hissi değişmez. tau=0 -> al=1 -> sert.
+                const float al = tau <= 0.f ? 1.f : 1.f - std::exp(-hopMs / (0.6f * tau));
+                corr1 += al * (want - corr1);
+                corr += al * (corr1 - corr);
 
                 const float fIn = sRef * std::exp2((midiF - 69.f) / 12.f);
                 const float fOut = sRef * std::exp2((midiF + corr - 69.f) / 12.f);
                 const float T0 = fclamp((float) sr / fIn, (float) sr / 1500.f, (float) Tmax);
                 const float Ts = fclamp((float) sr / fOut, 0.5f * T0, 2.f * T0);
-                makeMarks(c, T0, Ts, fclamp(1.f - std::fabs(corr) / 0.05f, 0.f, 1.f));   // |düzeltme| < 5 cent: giriş periyodunu izle
+                makeMarks(c, T0, Ts, fclamp(1.f - std::fabs(corr) / 0.05f, 0.f, 1.f), tau > 0.f);   // |düzeltme| < 5 cent: giriş periyodunu izle
                 active = true;
             } else hadGoal = false;
         } else updateDensity(rmsDb, bw, false);
@@ -421,6 +432,7 @@ private:
         cPrev = c;
         dispMidi.store(voiced ? midiF : -1.f);
         dispTarget.store(active ? target : -1);
+        dispCorr.store(active ? corr : 0.f);
     }
 
     // Hann pencereli 2T tane: m.pos çevresinden okunur, s'e (kesirli) yerleştirilir. Kesirli kaydırma 8 noktalı
