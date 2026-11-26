@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <vector>
+#include "KeyDetector.h"
 #include "Params.h"
 
 namespace mt {
@@ -40,8 +41,9 @@ public:
     std::atomic<int>   dispTarget{ -1 };   // hedef MIDI notası, -1 = yok
     std::atomic<bool>  keyRequest{ false };
     std::atomic<int>   keyState{ 0 };      // 0 boşta, 1 dinliyor, 2 bitti
-    std::atomic<int>   keyResult{ -1 };    // 0..11 major, 12..23 minor, -1 belirsiz
+    std::atomic<int>   keyResult{ -1 };    // 0..11 major, 12..23 minor, -1 = hiç sesli nota yok
     std::atomic<float> keyProgress{ 0.f };
+    std::atomic<int>   keyConf{ 0 }, keyAlt{ -1 }, keyAltConf{ 0 };   // en iyi tahmin %, 2. aday, 2. aday %
 
     bool ready() const { return N > 0; }
     int latency() const { return L; }
@@ -72,11 +74,12 @@ public:
         first = true; started = false; cPrev = 0; voiced = false; unv = 0; octCnt = 0; mi = 0;
         haveTarget = hadGoal = false; glideLeft = 0; corr = 0.f; outsideMs = 0.f; vibCount = 0;
         runActive = false; markCount = 0; kPtr = 0; sNext = 0.0; lastPos = 0.0; vmix = 0.f; dens = 0.f; medInit = false;
-        midiF = 0.f; keyFrames = keyVoiced = 0;
+        midiF = 0.f; key.prepare(sr);
     }
 
     float process(float x)
     {
+        keyTick(x);   // Key Detect: ham giriş, her işlemden önce; çıkış/Key/Scale/düzeltme analize karışmaz
         in[(size_t) (n & mask)] = x;
         // DC blocker: yalnız analiz yolunda (DC, NSDF'yi ve korelasyonu bozar); çıkış yolu girişe şeffaf kalır
         float a = x - dcX + dcR * dcY; dcX = x;
@@ -149,9 +152,19 @@ private:
     double sNext = 0.0, lastPos = 0.0;
     float vmix = 0.f;
 
-    // key detect
-    float hist[12] = {};
-    int keyFrames = 0, keyVoiced = 0;
+    KeyDetector key;
+
+    void keyTick(float x)
+    {
+        if (keyRequest.load(std::memory_order_relaxed) && keyRequest.exchange(false)) { key.start(kKeySeconds); keyProgress.store(0.f); keyState.store(1); }
+        if (keyState.load(std::memory_order_relaxed) != 1) return;
+        const bool done = key.feed(x);
+        keyProgress.store(key.progress());
+        if (!done) return;
+        keyConf.store(key.result.bestPct); keyAlt.store(key.result.alt); keyAltConf.store(key.result.altPct);
+        keyResult.store(key.result.best);
+        keyState.store(2);
+    }
 
     Mark& mk(i64 i) { return marks[i & (kMarks - 1)]; }
 
@@ -262,27 +275,6 @@ private:
         dens += (raw > dens ? aAtk : aRel) * (raw - dens);  // attack hızlı, release yavaş
     }
 
-    void finishKey()
-    {
-        int best = -1; float bestR = -2.f;
-        if ((float) keyVoiced * hopSec >= 1.5f) {
-            float mean = 0.f; for (float h : hist) mean += h; mean /= 12.f;
-            for (int k = 0; k < 24; ++k) {
-                const float* prof = k < 12 ? kKsMajor : kKsMinor;
-                float pm = 0.f; for (int i = 0; i < 12; ++i) pm += prof[i]; pm /= 12.f;
-                float sxy = 0.f, sxx = 0.f, syy = 0.f;
-                for (int i = 0; i < 12; ++i) {
-                    const float x = hist[(k % 12 + i) % 12] - mean, y = prof[i] - pm;
-                    sxy += x * y; sxx += x * x; syy += y * y;
-                }
-                const float rr = sxy / (std::sqrt(sxx * syy) + 1e-12f);
-                if (rr > bestR) { bestR = rr; best = k; }
-            }
-        }
-        keyResult.store(bestR >= 0.55f ? best : -1);
-        keyState.store(2);
-    }
-
     void addMark(double pos, float T0, float Ts, float g)
     {
         if (markCount > 0 && runActive) mk(markCount - 1).Pn = (float) (pos - lastPos);
@@ -334,7 +326,6 @@ private:
     void analyse()
     {
         const float ms = hopSumSq / (float) H;
-        const float rmsLin = std::sqrt(ms);
         const float rmsDb = 10.f * std::log10(ms + 1e-12f);
         const float bw = std::sqrt(hopSumD2 / (hopSumSq + 1e-12f)) * (float) sr / (2.f * kPi);
         hopSumSq = hopSumD2 = 0.f;
@@ -371,22 +362,6 @@ private:
         if (vNow && !voiced) { corr = 0.f; haveTarget = hadGoal = false; vibCount = 0; outsideMs = 0.f; runActive = false; }
         if (!vNow && voiced) { haveTarget = hadGoal = false; runActive = false; }
         voiced = vNow;
-
-        // 2) Key Detect
-        if (keyRequest.exchange(false)) {
-            for (float& h : hist) h = 0.f;
-            keyFrames = keyVoiced = 0; keyProgress.store(0.f); keyState.store(1);
-        }
-        if (keyState.load() == 1) {
-            if (strong) {
-                const int pc = ((int) std::lround(midiF) % 12 + 12) % 12;
-                hist[pc] += pd.conf * rmsLin;   // confidence * enerji
-                ++keyVoiced;
-            }
-            ++keyFrames;
-            keyProgress.store((float) keyFrames * hopSec / kKeySeconds);
-            if ((float) keyFrames * hopSec >= kKeySeconds) finishKey();
-        }
 
         // 3) düzeltme
         bool active = false;

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -132,6 +133,87 @@ static void checkSine(const char* name, EngineParams p, double sr, bool fm)
     CHECK(worst <= 10.0, "%s sr=%.0f: %.2f cent > 10", name, sr, worst);
 }
 
+
+// ---------- Key Detect: 24 ton, sentetik melodi; plugin'de FARKLI key seçili + düzeltme AÇIK ----------
+// Melodi: ~3 nota/sn, tonik üçlüsüne (özellikle tonik) çekilen basamaklı yürüyüş; cümle başı/sonları çoğunlukla (ama her zaman değil) tonik, 20 cent vibrato,
+// tonun kendine göre -20..+20 cent kayması (tuning offset testi).
+static std::vector<Seg> melody(int key, double secs, double detCents)
+{
+    static const int MAJ[7] = { 0, 2, 4, 5, 7, 9, 11 }, MIN[7] = { 0, 2, 3, 5, 7, 8, 10 };
+    const int* sc = key < 12 ? MAJ : MIN; const int tonic = key % 12;
+    uint32_t rs = 777u + (uint32_t) key * 7919u;
+    auto rnd = [&] { rs = rs * 1664525u + 1013904223u; return (double) (rs >> 8) / 16777216.0; };
+    auto hz = [&](int deg) {
+        const int oct = (int) std::floor(deg / 7.0), dd = ((deg % 7) + 7) % 7;
+        return 440.0 * std::exp2((48 + tonic + 12 * oct + sc[dd] + detCents / 100.0 - 69.0) / 12.0);
+    };
+    std::vector<Seg> s = { { 0.25, 0, 0, 0, 0, 0 } };
+    double t = 0;
+    while (t < secs) {
+        const int len = 8 + (int) (rnd() * 5); int deg = rnd() < 0.5 ? 0 : (rnd() < 0.5 ? 2 : 4);   // cümle başı: %50 tonik
+        for (int i = 0; i < len; ++i) {
+            const bool last = i == len - 1;
+            if (last) {                                          // cümle sonu: %70 tonik, %15 3., %10 5., %5 2. derece
+                const double r = rnd(); const int e = r < 0.7 ? 0 : (r < 0.85 ? 2 : (r < 0.95 ? 4 : 1));
+                deg = (e == 0 && deg > 3) ? 7 : e;
+            } else if (i > 0) {                                  // komşu derecelere adım; tonik üçlüsü (0,2,4) 3 kat çekici
+                double w[5], tot = 0; int cand[5], nc = 0;
+                for (int st = -2; st <= 2; ++st) {
+                    const int c = deg + st; if (st == 0 || c < -1 || c > 7) continue;   // tekrar yok: komşu notalar tek segmentte birleşmesin
+                    const int m = ((c % 7) + 7) % 7;
+                    w[nc] = (m == 0 ? 6.0 : ((m == 2 || m == 4) ? 3.0 : 1.0)) / (1.0 + std::abs(st)); cand[nc++] = c; tot += w[nc - 1];
+                }
+                double r = rnd() * tot; int pick = 0;
+                while (pick < nc - 1 && r > w[pick]) r -= w[pick++];
+                deg = cand[pick];
+            }
+            const bool tonicNote = (((deg % 7) + 7) % 7) == 0;
+            const double dur = last ? 0.8 + 0.4 * rnd() : (0.15 + 0.2 * rnd()) * (tonicNote ? 1.6 : 1.0);   // tonik daha uzun tutulur
+            s.push_back({ dur, 1, hz(deg), hz(deg), 20, i & 1 }); t += dur;
+        }
+        s.push_back({ 0.35, 0, 0, 0, 0, 0 }); t += 0.35;
+    }
+    return s;
+}
+
+static unsigned scaleMask(int tonic) { static const int M[7] = { 0, 2, 4, 5, 7, 9, 11 }; unsigned m = 0; for (int d : M) m |= 1u << ((tonic + d) % 12); return m; }
+static int relativeOf(int k) { return k < 12 ? 12 + (k + 9) % 12 : (k - 12 + 3) % 12; }
+
+static Engine* keyRun(Engine& e, double sr, const std::vector<float>& x, const EngineParams& p, int& active)
+{
+    e.prepare(sr); e.set(p); e.keyRequest.store(true); active = 0;
+    for (size_t i = 0; i < x.size(); ++i) { e.process(x[i]); if (i % 512 == 0 && e.dispTarget.load() >= 0) ++active; }
+    return &e;
+}
+
+static void keyDetectTest(double sr)
+{
+    int ok = 0, rel = 0;
+    for (int k = 0; k < 24; ++k) {
+        const std::vector<float> x = vocal(sr, melody(k, (double) kKeySeconds + 2.0, (double) ((k * 7) % 41 - 20)));
+        EngineParams p; p.speed = 0.f; p.mask = scaleMask((k % 12 + 6) % 12);   // seçili key = tritone uzakta, düzeltme açık
+        Engine e; int act = 0; keyRun(e, sr, x, p, act);
+        const int got = e.keyResult.load(), pct = e.keyConf.load(), alt = e.keyAlt.load();
+        const bool hit = got == k, isRel = !hit && got == relativeOf(k);
+        ok += hit; rel += isRel;
+        std::printf("  %-9s -> %-9s %%%-3d alt %-9s %s%s\n", keyName(k).c_str(), got >= 0 ? keyName(got).c_str() : "-", pct,
+                    alt >= 0 ? keyName(alt).c_str() : "-", hit ? "OK" : (isRel ? "RELATIF" : "YANLIS"), act > 0 ? "" : "  (duzeltme calismadi!)");
+        CHECK(e.keyState.load() == 2, "key detect bitmedi (k=%d)", k);
+        CHECK(act > 0, "duzeltme acik degildi, test gecersiz (k=%d)", k);
+    }
+    std::printf("Key Detect sr=%6.0f  dogru %d/24, relatif karisiklik %d, diger %d\n", sr, ok, rel, 24 - ok - rel);
+    CHECK(ok >= 20, "Key Detect sr=%.0f: %d/24 < 20", sr, ok);
+
+    // bagimsizlik: ayni giris, baska key + duzeltme kapali/acik -> sonuc ayni olmali
+    const std::vector<float> x = vocal(sr, melody(3, (double) kKeySeconds + 2.0, 12.0));
+    int a0 = 0, a1 = 0; Engine e0, e1;
+    EngineParams p0; p0.mask = 0xFFF; p0.tolCents = 50.f;
+    EngineParams p1; p1.speed = 0.f; p1.mask = scaleMask(1);
+    keyRun(e0, sr, x, p0, a0); keyRun(e1, sr, x, p1, a1);
+    CHECK(e0.keyResult.load() == e1.keyResult.load() && e0.keyConf.load() == e1.keyConf.load(),
+          "secili key/duzeltme analizi etkiliyor: %d %%%d vs %d %%%d", e0.keyResult.load(), e0.keyConf.load(), e1.keyResult.load(), e1.keyConf.load());
+}
+
 int main(int argc, char** argv)
 {
     const std::string dir = argc > 1 ? argv[1] : "";
@@ -179,6 +261,7 @@ int main(int argc, char** argv)
             else wav(dir, "sonra_cikis_speed40_" + tag + ".wav", y, sr);
         }
     }
+    for (double sr : { 44100.0, 48000.0 }) keyDetectTest(sr);
     std::printf(fails ? "SELFTEST FAILED\n" : "SELFTEST OK\n");
     return fails ? 1 : 0;
 }
