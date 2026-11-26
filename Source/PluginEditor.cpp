@@ -9,6 +9,12 @@ static const String kLabelOut = String::fromUTF8 ("Siki\xc5\x9f");
 static const char* kNames[12] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
 static String noteName (int midi) { return String (kNames[((midi % 12) + 12) % 12]) + String (midi / 12 - 1); }
 
+static String listeningText (float progress)
+{
+    const int total = roundToInt (mt::kKeySeconds);
+    return "Dinleniyor... " + String (jmin (total, (int) (progress * (float) total))) + " sn / " + String (total) + " sn";
+}
+
 MadenciEditor::Piano::Piano (MadenciProcessor& p) : proc (p)
 {
     for (int i = 0; i < 12; ++i) np[i] = proc.apvts.getParameter ("n" + String (i));
@@ -82,9 +88,9 @@ void MadenciEditor::setChoice (const char* id, int index)
 
 MadenciEditor::MadenciEditor (MadenciProcessor& p) : AudioProcessorEditor (&p), proc (p), piano (p)
 {
-    setSize (880, 440);
+    setSize (1000, 440);   // Key Detect etiketi ("A# minor (alternatif: C# major)") icin genis
     addAndMakeVisible (detectBtn);
-    detectBtn.onClick = [this] { proc.engine.keyRequest.store (true); keyLabel.setText ("Listening...", dontSendNotification); };
+    detectBtn.onClick = [this] { proc.engine.keyRequest.store (true); keyLabel.setText (listeningText (0.f), dontSendNotification); };
     addAndMakeVisible (keyLabel); addAndMakeVisible (noteLabel);
     keyLabel.setColour (Label::textColourId, Colours::white);
     noteLabel.setColour (Label::textColourId, Colours::white);
@@ -107,7 +113,7 @@ void MadenciEditor::resized()
     auto r = getLocalBounds().reduced (12);
     auto top = r.removeFromTop (28);
     detectBtn.setBounds (top.removeFromLeft (100)); top.removeFromLeft (6);
-    keyLabel.setBounds (top.removeFromLeft (130)); top.removeFromLeft (6);
+    keyLabel.setBounds (top.removeFromLeft (250)); top.removeFromLeft (6);
     keyBox.setBounds (top.removeFromLeft (70)); top.removeFromLeft (6);
     scaleBox.setBounds (top.removeFromLeft (100)); top.removeFromLeft (6);
     rangeBox.setBounds (top.removeFromLeft (130)); top.removeFromLeft (10);
@@ -165,15 +171,15 @@ void MadenciEditor::timerCallback()
 
     const int st = proc.engine.keyState.load();
     if (st == 1)
-        keyLabel.setText ("Listening " + String (roundToInt (proc.engine.keyProgress.load() * 100.f)) + "%", dontSendNotification);
+        keyLabel.setText (listeningText (proc.engine.keyProgress.load()), dontSendNotification);
     else if (st == 2)
     {
         proc.engine.keyState.store (0);
-        const int r = proc.engine.keyResult.load();
-        if (r < 0) keyLabel.setText ("belirsiz", dontSendNotification);
+        const int r = proc.engine.keyResult.load(), alt = proc.engine.keyAlt.load();
+        if (r < 0) keyLabel.setText (String::fromUTF8 ("Ses alg\xc4\xb1lanamad\xc4\xb1"), dontSendNotification);   // hic sesli nota yok
         else
         {
-            keyLabel.setText (String (kNames[r % 12]) + (r >= 12 ? " minor" : " major"), dontSendNotification);
+            keyLabel.setText (String (mt::keyName (r)) + (alt >= 0 ? " (alternatif: " + String (mt::keyName (alt)) + ")" : String()), dontSendNotification);
             setChoice ("key", r % 12); setChoice ("scale", r >= 12 ? 1 : 0);   // maskeyi timer doldurur
         }
     }
