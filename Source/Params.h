@@ -12,6 +12,10 @@ constexpr float kSmartPadMs = 250.f;   // Smart Retune yumuşatma payı (en fazl
 constexpr int   kFormantDefault = 0;   // Formant: 0 = Corrected (formantlar sabit), 1 = Not Corrected (formantlar perdeyle kayar)
 constexpr float kFormantSmoothMs = 50.f;   // Corrected <-> Not Corrected geçiş yumuşatma süresi
 
+constexpr float kSlideAmtMin = 0.f,  kSlideAmtMax = 200.f, kSlideAmtDefault = 50.f;   // TEKNOS'A KAY: baslangic ofseti (cent)
+constexpr float kSlideTimeMin = 20.f, kSlideTimeMax = 300.f, kSlideTimeDefault = 80.f;  // kayma suresi (ms)
+constexpr float kSlideMinChangeSemi = 1.f;   // hedef degisimi bundan kucukse kayma baslamaz (100 cent)
+
 constexpr float kRefMin = 415.f, kRefMax = 466.f, kRefDefault = 440.f;
 constexpr float kMinDetectHz = 70.f;   // en düşük Range (Generic) -> sabit gecikme buna göre
 constexpr float kKeySeconds = 8.f;     // Key Detect dinleme süresi

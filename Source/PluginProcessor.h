@@ -35,7 +35,7 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout makeLayout();
     void timerCallback() override;   // Key/Scale degisince 12 nota anahtarini doldurur
 
-    std::atomic<float> *pRef, *pSpeed, *pGlide, *pTolC, *pTolT, *pVibAmt, *pVibOn, *pSmart, *pRange, *pKey, *pScale, *pFormant;
+    std::atomic<float> *pRef, *pSpeed, *pGlide, *pTolC, *pTolT, *pVibAmt, *pVibOn, *pSmart, *pRange, *pKey, *pScale, *pFormant, *pSlideOn, *pSlideAmt, *pSlideTime, *pSlideDir;
     std::atomic<float>* pNote[12];
     int lastKey = 0, lastScale = 0;
 

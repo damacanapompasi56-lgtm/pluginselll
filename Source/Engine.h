@@ -33,6 +33,9 @@ struct EngineParams {
     int range = kGenericRange;
     bool formantCorrected = kFormantDefault == 0;
     unsigned mask = 0xFFF;  // izinli perde sınıfları, bit0 = C
+    bool slideOn = false;   // TEKNOS'A KAY: nota başlangıcında perde kayması
+    float slideCents = kSlideAmtDefault, slideMs = kSlideTimeDefault;
+    int slideDir = 0;       // 0 = alttan, 1 = üstten
 };
 
 class Engine {
@@ -78,7 +81,7 @@ public:
         histDecay = std::exp(-hopSec / 30.f);         // voiced geçmişi: ~30 sn
         n = decN = 0; decAcc = 0.f; decCnt = 0; prevX = 0.f; hopSumSq = hopSumD2 = 0.f; dcX = dcY = 0.f;
         first = true; started = false; cPrev = 0; voiced = false; unv = 0; jumpCnt = 0; jumpM = 0.f; mi = 0;
-        haveTarget = hadGoal = false; glideLeft = glideTot = 0; corr = corr1 = 0.f; goal0 = 0.f; rhoPrev = 1.f; outsideMs = 0.f; vibCount = 0;
+        haveTarget = hadGoal = false; glideLeft = glideTot = 0; slideLeft = slideTot = 0; slideOff = slideStart = 0.f; corr = corr1 = 0.f; goal0 = 0.f; rhoPrev = 1.f; outsideMs = 0.f; vibCount = 0;
         runActive = false; markCount = 0; kPtr = 0; sNext = 0.0; lastPos = 0.0; vmix = 0.f; dens = densS = 0.5f; medInit = false; histMass = 0.f;
         for (auto& h : hist) for (float& v : h) v = 0.f;
         midiF = 0.f; key.prepare(sr);
@@ -145,6 +148,8 @@ private:
     // hedef / düzeltme
     bool haveTarget = false, hadGoal = false;
     int target = 0, lastTarget = 0, glideLeft = 0, glideTot = 0;
+    int slideLeft = 0, slideTot = 0;       // kayma: kalan / toplam hop
+    float slideOff = 0.f, slideStart = 0.f;   // hedefe eklenen geçici ofset (yarım ton), başlangıç değeri
     float goal = 0.f, goal0 = 0.f, corr = 0.f, corr1 = 0.f, rhoPrev = 1.f, outsideMs = 0.f;   // corr1: 2. kademe ön süzgeç, rhoPrev: önceki hop'un Ts/T0 oranı
 
     // vibrato merkezi (kayan ortalama)
@@ -352,6 +357,13 @@ private:
         return fclamp(t, 0.f, kRetuneMaxMs);
     }
 
+    // TEKNOS'A KAY: ofset -start'tan 0'a yarım kosinüsle iner; son hop'ta tam 0. Parametreler başlangıçta kilitlenir (yumuşatma gerekmez).
+    void startSlide()
+    {
+        slideTot = slideLeft = std::max(1, (int) std::lround(fclamp(P.slideMs, kSlideTimeMin, kSlideTimeMax) / (hopSec * 1000.f)));
+        slideStart = slideOff = fclamp(P.slideCents, kSlideAmtMin, kSlideAmtMax) * 0.01f * (P.slideDir ? 1.f : -1.f);
+    }
+
     void addMark(double pos, float T0, float Ts, float g)
     {
         if (markCount > 0 && runActive) mk(markCount - 1).Pn = (float) (pos - lastPos);
@@ -474,8 +486,15 @@ private:
             else if (cand != target && std::fabs(mSel - (float) cand) + 0.25f < std::fabs(mSel - (float) target)) target = cand;  // histerezis
 
             if (haveTarget) {
-                if (!hadGoal) { goal = (float) target; lastTarget = target; glideLeft = glideTot = 0; hadGoal = true; }
+                if (slideLeft > 0) { --slideLeft; slideOff = slideLeft > 0 ? slideStart * 0.5f * (1.f + std::cos(kPi * (1.f - (float) slideLeft / (float) slideTot))) : 0.f; }
+                if (!hadGoal) {
+                    goal = (float) target; lastTarget = target; glideLeft = glideTot = 0; hadGoal = true;
+                    slideLeft = 0; slideOff = 0.f;
+                    if (P.slideOn) startSlide();
+                }
                 else if (target != lastTarget) {
+                    // shortcut: hedefler tam yarım ton, bu yüzden eşik yalnız glide ortasında (goal kesirli) anlamlı; başlamış kayma kesilmez, bitene kadar sürer
+                    if (P.slideOn && std::fabs((float) target - goal) >= kSlideMinChangeSemi) startSlide();
                     const float g = fclamp(sGlide, kGlideMin, kGlideMax) * (1.f - hardness);  // sertlikle glide -> 0
                     glideLeft = glideTot = (int) std::lround(g / hopMs); goal0 = goal; lastTarget = target;
                 }
@@ -488,10 +507,10 @@ private:
                 outsideMs = inside ? 0.f : outsideMs + hopMs;
                 const bool hold = inside || (P.tolMs >= 1.f && outsideMs < sTolT);
 
-                float want = 0.f;
+                float want = hold ? slideOff : 0.f;   // tolerans içinde de kayma duyulur (ofset 0 iken eski davranış)
                 if (!hold) {
                     const float vs = P.vibOn ? (sVib / 100.f) * (1.f - hardness) : 0.f;
-                    want = (goal - midiF) + vs * fclamp(midiF - center, -1.f, 1.f);
+                    want = (goal + slideOff - midiF) + vs * fclamp(midiF - center, -1.f, 1.f);
                     want = fclamp(want, -12.f, 12.f);
                 }
                 const float tau = effTau();                      // Speed<0 -> taban 0 ms

@@ -46,7 +46,14 @@ AudioProcessorValueTreeState::ParameterLayout MadenciProcessor::makeLayout()
            NormalisableRange<float> (0.f, 200.f, 1.f), 0.f, txt ("ms", true)));
     for (int i = 0; i < 12; ++i)
         l.add (std::make_unique<AudioParameterBool> (ParameterID { "n" + String (i), 1 }, "Note " + kKeyNames[i], inScale (i, 0, 0)));
-    l.add (std::make_unique<AudioParameterChoice> (ParameterID { "formant", 1 }, "Formant", StringArray { "Corrected", "Not Corrected" }, mt::kFormantDefault));   // sona: eski otomasyon sirasi bozulmasin
+    l.add (std::make_unique<AudioParameterChoice> (ParameterID { "formant", 1 }, "Formant", StringArray { "Corrected", "Not Corrected" }, mt::kFormantDefault));   // eski otomasyon sirasi bozulmasin: yeni parametreler hep sona
+    l.add (std::make_unique<AudioParameterBool> (ParameterID { "slideOn", 1 }, String::fromUTF8 ("TEKNO\xC5\x9E'A KAY"), false));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "slideAmount", 1 }, "Slide Amount",
+           NormalisableRange<float> (mt::kSlideAmtMin, mt::kSlideAmtMax, 1.f), mt::kSlideAmtDefault, txt ("c", false)));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "slideTime", 1 }, "Slide Time",
+           NormalisableRange<float> (mt::kSlideTimeMin, mt::kSlideTimeMax, 1.f), mt::kSlideTimeDefault, txt ("ms", false)));
+    l.add (std::make_unique<AudioParameterChoice> (ParameterID { "slideDir", 1 }, "Slide Direction",
+           StringArray { String::fromUTF8 ("Alttan"), String::fromUTF8 ("\xC3\x9C" "stten") }, 0));
     return l;
 }
 
@@ -59,6 +66,7 @@ MadenciProcessor::MadenciProcessor()
     pRef = raw ("ref"); pSpeed = raw ("speed"); pGlide = raw ("glide"); pTolC = raw ("tolC"); pTolT = raw ("tolT");
     pVibAmt = raw ("vibAmt"); pVibOn = raw ("vibOn"); pSmart = raw ("smart"); pRange = raw ("range");
     pKey = raw ("key"); pScale = raw ("scale"); pFormant = raw ("formant");
+    pSlideOn = raw ("slideOn"); pSlideAmt = raw ("slideAmount"); pSlideTime = raw ("slideTime"); pSlideDir = raw ("slideDir");
     for (int i = 0; i < 12; ++i) pNote[i] = raw ("n" + String (i));
     lastKey = (int) pKey->load(); lastScale = (int) pScale->load();
     startTimerHz (15);
@@ -96,6 +104,7 @@ void MadenciProcessor::processBlock (AudioBuffer<float>& buf, MidiBuffer&)
     p.refHz = pRef->load(); p.speed = pSpeed->load(); p.glideMs = pGlide->load();
     p.tolCents = pTolC->load(); p.tolMs = pTolT->load(); p.vibPct = pVibAmt->load();
     p.vibOn = pVibOn->load() > 0.5f; p.smart = pSmart->load() > 0.5f; p.range = (int) pRange->load(); p.formantCorrected = (int) pFormant->load() == 0;
+    p.slideOn = pSlideOn->load() > 0.5f; p.slideCents = pSlideAmt->load(); p.slideMs = pSlideTime->load(); p.slideDir = (int) pSlideDir->load();
     p.mask = 0;
     for (int i = 0; i < 12; ++i) if (pNote[i]->load() > 0.5f) p.mask |= 1u << i;
     engine.set (p);
