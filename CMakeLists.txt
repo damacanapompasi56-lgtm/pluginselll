@@ -10,7 +10,7 @@ target_include_directories(SelfTest PRIVATE Source)
 if(MSVC)
   target_compile_options(SelfTest PRIVATE /utf-8)
 endif()
-add_test(NAME SelfTest COMMAND SelfTest)
+add_test(NAME SelfTest COMMAND SelfTest ${CMAKE_BINARY_DIR}/wav)   # onceki/sonraki WAV'lar build/wav/ altina yazilir
 
 # --- JUCE (sabit surum, CI'da indirilir) ---
 include(FetchContent)

@@ -2,14 +2,18 @@
 // MADENCITUNE DSP motoru. Saf C++ (JUCE yok) -> CI'da self-test ile doğrudan test edilir.
 //
 // Akış (mono, örnek örnek):
-//   giriş -> halka tampon + 4x/8x decimate -> her H örnekte (~3 ms): MPM pitch (kaba: decimate,
-//   ince: tam hızda) -> voiced/unvoiced + median + oktav koruması -> hedef nota (histerezis)
-//   -> tolerans / glide / Speed üstel yaklaşım / vibrato -> analiz işaretleri (T0) ve çıkış periyodu (Ts)
-//   -> PSOLA: Hann pencereli 2*T0'lık taneler, Ts aralıkla toplanır (formant korunur)
-//   -> voiced maskesine göre dry ile crossfade. Gecikme sabit: L = 3*Tmax + 64 örnek.
+//   giriş -> DC blocker (yalnız analiz yolu) -> halka tampon + decimate -> her H örnekte: MPM pitch
+//   (kaba: decimate, ince: tam hızda, parabolik interpolasyon) -> voiced/unvoiced + median + oktav koruması
+//   -> hedef nota (histerezis) -> tolerans / glide / Speed / vibrato -> düzeltme (yarım ton)
+//   -> pitch mark'lar: her mark bir öncekinden TAM BİR PERİYOT sonra, dalga şekli korelasyonuyla kilitli
+//      (ham tepe seçimi yok, kesirli konum) -> sentez: Hann pencereli 2T taneler, sinc ile kesirli yerleşim,
+//      toplama bölerek normalize (acc/accW) -> voiced maskesine göre dry ile crossfade.
+//   Düzeltme 0 iken sentez adımı = analiz mark aralığı -> çıkış girişin birebir gecikmeli kopyası.
+//   Gecikme sabit ve bildirilir: L = 2048 örnek (>50 kHz: 4096).
 #include <atomic>
 #include <cmath>
 #include <cstddef>
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 #include "Params.h"
@@ -48,33 +52,40 @@ public:
         sr = sampleRate;
         d = sr > 60000.0 ? 8 : 4;
         srD = sr / d;
-        TmaxD = (int) std::ceil(srD / kMinDetectHz);
-        Tmax = TmaxD * d;
-        Wd = 2 * TmaxD;
         H = 32 * d;
-        L = 3 * Tmax + 64;
+        L = sr > 50000.0 ? 4096 : 2048;
+        TmaxD = (L - H - 32) / (3 * d);          // sentez + analiz payı: L >= 3*Tmax + H + 32
+        Tmax = TmaxD * d;                        // en uzun periyot (44.1k: 70 Hz, 96k: 76 Hz)
+        Wd = 2 * TmaxD;
         N = nextPow2(8 * Tmax); mask = N - 1;
-        in.assign((size_t) N, 0.f); acc.assign((size_t) N, 0.f); accW.assign((size_t) N, 0.f); vmask.assign((size_t) N, 0.f);
+        in.assign((size_t) N, 0.f); ain.assign((size_t) N, 0.f); acc.assign((size_t) N, 0.f); accW.assign((size_t) N, 0.f); vmask.assign((size_t) N, 0.f);
         const int ND = nextPow2(2 * Wd); decMask = ND - 1; dec.assign((size_t) ND, 0.f);
         yD.assign((size_t) Wd, 0.f); nsdf.assign((size_t) TmaxD + 3, 0.f); nsdfF.assign((size_t) (2 * d + 3), 0.f);
+        ncc.assign((size_t) (Tmax + 8), 0.f);
         hopSec = (float) H / (float) sr;
         vibN = std::min(128, std::max(2, (int) std::lround(0.16 / hopSec)));
-        vA = 1.f - std::exp(-1.f / (0.004f * (float) sr));
+        vA = 1.f - std::exp(-1.f / (0.006f * (float) sr));      // dry/wet crossfade ~6 ms
+        dcR = 1.f - 6.2831853f * 20.f / (float) sr;               // DC blocker ~20 Hz
         aAtk = 1.f - std::exp(-hopSec / 0.3f);
         aRel = 1.f - std::exp(-hopSec / 1.5f);
-        n = decN = 0; decAcc = 0.f; decCnt = 0; prevX = 0.f; hopSumSq = hopSumD2 = 0.f;
+        n = decN = 0; decAcc = 0.f; decCnt = 0; prevX = 0.f; hopSumSq = hopSumD2 = 0.f; dcX = dcY = 0.f;
         first = true; started = false; cPrev = 0; voiced = false; unv = 0; octCnt = 0; mi = 0;
         haveTarget = hadGoal = false; glideLeft = 0; corr = 0.f; outsideMs = 0.f; vibCount = 0;
-        runActive = false; markCount = 0; kPtr = 0; sNext = 0.0; vmix = 0.f; dens = 0.f; medInit = false;
+        runActive = false; markCount = 0; kPtr = 0; sNext = 0.0; lastPos = 0.0; vmix = 0.f; dens = 0.f; medInit = false;
         midiF = 0.f; keyFrames = keyVoiced = 0;
     }
 
     float process(float x)
     {
         in[(size_t) (n & mask)] = x;
+        // DC blocker: yalnız analiz yolunda (DC, NSDF'yi ve korelasyonu bozar); çıkış yolu girişe şeffaf kalır
+        float a = x - dcX + dcR * dcY; dcX = x;
+        if (std::fabs(a) < 1e-20f) a = 0.f;       // denormal koruması
+        dcY = a;
+        ain[(size_t) (n & mask)] = a;
         const float dx = x - prevX; prevX = x;
         hopSumSq += x * x; hopSumD2 += dx * dx;
-        decAcc += x;
+        decAcc += a;
         if (++decCnt == d) { dec[(size_t) (decN & decMask)] = decAcc / (float) d; ++decN; decAcc = 0.f; decCnt = 0; }
         ++n;
         if (n % H == 0) analyse();
@@ -83,17 +94,19 @@ public:
         const i64 o = n - 1 - L;       // çıkış zamanı (giriş indeksi cinsinden)
         if (o < 0) return 0.f;
         const size_t i = (size_t) (o & mask);
-        const float wet = acc[i] / std::fmax(accW[i], 0.25f);
+        const float dry = in[i], w = accW[i];
+        const float wet = acc[i] / std::fmax(w, 1e-6f);
         vmix += vA * (vmask[i] - vmix);
-        const float y = vmix * wet + (1.f - vmix) * in[i];
+        if (vmix < 1e-6f) vmix = 0.f; else if (vmix > 0.999999f) vmix = 1.f;   // denormal / tam bypass
+        const float m = vmix * std::fmin(w * 8.f, 1.f);   // tane örtüşmesi yoksa (w~0) kuruya düş: delik yok
         acc[i] = 0.f; accW[i] = 0.f;
-        return y;
+        return dry + m * (wet - dry);
     }
 
 private:
     static constexpr int kNone = -1000;
     static constexpr int kMarks = 256;
-    struct Mark { i64 pos; float T0, Ts; };
+    struct Mark { double pos; float T0, Ts, Pn, g; };   // Pn: bir sonraki mark'a uzaklık, g: bypass ağırlığı
     struct Pitch { float hz, conf; };
 
     EngineParams P;
@@ -101,10 +114,10 @@ private:
     int d = 4, TmaxD = 0, Tmax = 0, Wd = 0, H = 128, L = 0, N = 0, vibN = 55, decMask = 0;
     i64 mask = 0;
     float hopSec = 0.003f, vA = 0.f, aAtk = 0.f, aRel = 0.f;
-    std::vector<float> in, acc, accW, vmask, dec, yD, nsdf, nsdfF;
+    std::vector<float> in, ain, acc, accW, vmask, dec, yD, nsdf, nsdfF, ncc;
 
     i64 n = 0, decN = 0, cPrev = 0;
-    float decAcc = 0.f, prevX = 0.f, hopSumSq = 0.f, hopSumD2 = 0.f;
+    float decAcc = 0.f, prevX = 0.f, hopSumSq = 0.f, hopSumD2 = 0.f, dcX = 0.f, dcY = 0.f, dcR = 0.997f;
     int decCnt = 0;
 
     // yumuşatılmış parametreler
@@ -131,17 +144,16 @@ private:
 
     // PSOLA
     Mark marks[kMarks];
-    int markCount = 0, kPtr = 0;
+    i64 markCount = 0, kPtr = 0;
     bool runActive = false;
-    i64 nextMark = 0;
-    double sNext = 0.0;
+    double sNext = 0.0, lastPos = 0.0;
     float vmix = 0.f;
 
     // key detect
     float hist[12] = {};
     int keyFrames = 0, keyVoiced = 0;
 
-    Mark& mk(int i) { return marks[i & (kMarks - 1)]; }
+    Mark& mk(i64 i) { return marks[i & (kMarks - 1)]; }
 
     bool allowed(int k) const
     {
@@ -222,7 +234,7 @@ private:
         for (int l = lo; l <= hi2; ++l) {
             float rr = 0.f, mm = 0.f;
             for (int j = 0; j < W - l; ++j) {
-                const float a = in[(size_t) ((s0 + j) & mask)], b = in[(size_t) ((s0 + j + l) & mask)];
+                const float a = ain[(size_t) ((s0 + j) & mask)], b = ain[(size_t) ((s0 + j + l) & mask)];
                 rr += a * b; mm += a * a + b * b;
             }
             const float v = mm > 1e-9f ? 2.f * rr / mm : 0.f;
@@ -271,19 +283,51 @@ private:
         keyState.store(2);
     }
 
-    void makeMarks(i64 c, float T0, float Ts)
+    void addMark(double pos, float T0, float Ts, float g)
     {
-        if (!runActive) { nextMark = c; runActive = true; }
-        while (nextMark <= c) {
-            const int r = (int) (T0 * 0.2f);
-            i64 best = nextMark; float bv = -1e9f;
-            for (i64 p = nextMark - r; p <= nextMark + r; ++p) {
-                const float v = in[(size_t) (p & mask)];
-                if (v > bv) { bv = v; best = p; }
+        if (markCount > 0 && runActive) mk(markCount - 1).Pn = (float) (pos - lastPos);
+        mk(markCount++) = Mark{ pos, T0, Ts, T0, g };
+        lastPos = pos;
+    }
+
+    // Tutarlı pitch mark'lar: yeni mark = önceki + ölçülmüş periyot. Periyot, önceki mark çevresindeki
+    // T0 uzunluklu parçanın T0+-%12 gecikmedeki kopyasıyla normalize korelasyonundan (parabolik) bulunur.
+    // Ham örnek tepesi seçilmez -> ardışık taneler aynı dalga fazında, tane dikişi kayması yok.
+    void makeMarks(i64 c, float T0, float Ts, float g)
+    {
+        if (!runActive) {                                   // yeni sesli bölge: ilk mark = ilk periyottaki tepe
+            i64 best = c; float bv = -1e9f;
+            for (i64 p = c; p < c + (i64) T0; ++p) { const float v = ain[(size_t) (p & mask)]; if (v > bv) { bv = v; best = p; } }
+            runActive = true;
+            sNext = (double) best;                          // sentez ağı ilk mark'a hizalı başlar (d = 0)
+            addMark((double) best, T0, Ts, g);
+        }
+        const int hw = std::max(4, (int) (T0 * 0.5f)), R = std::max(3, (int) (T0 * 0.12f));
+        while (lastPos + (double) T0 <= (double) c) {
+            const i64 pi = (i64) std::llround(lastPos);
+            const int lc = (int) std::lround(T0), lo = std::max(2, lc - R), hi = std::min(Tmax + 6, lc + R);
+            float ea = 0.f;
+            for (int j = -hw; j < hw; ++j) { const float a = ain[(size_t) ((pi + j) & mask)]; ea += a * a; }
+            int bl = lc; float bv = -2.f;
+            for (int l = lo; l <= hi; ++l) {
+                float rr = 0.f, eb = 0.f;
+                for (int j = -hw; j < hw; ++j) {
+                    const float a = ain[(size_t) ((pi + j) & mask)], b = ain[(size_t) ((pi + j + l) & mask)];
+                    rr += a * b; eb += b * b;
+                }
+                const float v = rr / std::sqrt(ea * eb + 1e-12f);
+                ncc[(size_t) l] = v;
+                if (v > bv) { bv = v; bl = l; }
             }
-            if (markCount > 0 && best <= mk(markCount - 1).pos) best = mk(markCount - 1).pos + 1;
-            mk(markCount++) = Mark{ best, T0, Ts };
-            nextMark = best + (i64) std::lround(T0);
+            double P = (double) T0;                         // zayıf korelasyonda nominal periyot
+            if (bv > 0.2f) {
+                P = (double) bl;
+                if (bl > lo && bl < hi) {
+                    const float a = ncc[(size_t) bl - 1], b = ncc[(size_t) bl], cc = ncc[(size_t) bl + 1], den = a - 2.f * b + cc;
+                    if (den < -1e-9f) P += (double) fclamp(0.5f * (a - cc) / den, -1.f, 1.f);
+                }
+            }
+            addMark(lastPos + P, T0, Ts, g);
         }
     }
 
@@ -311,7 +355,7 @@ private:
         const Pitch pd = detect();
         const bool strong = pd.hz > 0.f && rmsDb > -55.f && pd.conf >= (voiced ? 0.6f : 0.75f);
         unv = strong ? 0 : (unv < 100 ? unv + 1 : unv);
-        const bool vNow = strong || (voiced && unv < 4);
+        const bool vNow = strong || (voiced && unv < 8);   // ~23 ms tutma: kısa güven düşüşlerinde wet/dry titremesi yok
         if (strong) {
             float m = 69.f + 12.f * std::log2(pd.hz / sRef);
             if (!voiced) { med[0] = med[1] = med[2] = m; octCnt = 0; }
@@ -392,7 +436,7 @@ private:
                 const float fOut = sRef * std::exp2((midiF + corr - 69.f) / 12.f);
                 const float T0 = fclamp((float) sr / fIn, (float) sr / 1500.f, (float) Tmax);
                 const float Ts = fclamp((float) sr / fOut, 0.5f * T0, 2.f * T0);
-                makeMarks(c, T0, Ts);
+                makeMarks(c, T0, Ts, fclamp(1.f - std::fabs(corr) / 0.05f, 0.f, 1.f));   // |düzeltme| < 5 cent: giriş periyodunu izle
                 active = true;
             } else hadGoal = false;
         } else updateDensity(rmsDb, bw, false);
@@ -404,17 +448,27 @@ private:
         dispTarget.store(active ? target : -1);
     }
 
+    // Hann pencereli 2T tane: m.pos çevresinden okunur, s'e (kesirli) yerleştirilir. Kesirli kaydırma 8 noktalı
+    // pencereli sinc ile (katsayılar tane başına bir kez); ofset sıfırsa katsayılar delta -> birebir kopya.
     void grain(const Mark& m, double s)
     {
-        const int h = std::max(2, (int) std::lround(m.T0));
-        const i64 sc = (i64) std::floor(s);
-        const float fr = (float) (s - (double) sc);   // kesirli yerleşim: periyot jitter'ı yok
-        for (int i = -h; i <= h; ++i) {
-            const float w = 0.5f * (1.f + std::cos(kPi * (float) i / (float) h));
-            const i64 p = m.pos + i;
-            const float v = in[(size_t) ((p - 1) & mask)] * fr + in[(size_t) (p & mask)] * (1.f - fr);
-            const size_t k = (size_t) ((sc + i) & mask);
-            acc[k] += w * v; accW[k] += w;
+        const float h = std::max(2.f, m.T0);
+        const double dl = m.pos - s;
+        const i64 p0 = (i64) std::floor(dl);
+        const float fr = (float) (dl - (double) p0);
+        float cf[8], sum = 0.f;
+        for (int j = -3; j <= 4; ++j) {
+            const float x = (float) j - fr;
+            const float sc = std::fabs(x) < 1e-6f ? 1.f : std::sin(kPi * x) / (kPi * x);
+            cf[j + 3] = sc * 0.5f * (1.f + std::cos(kPi * x / 4.f)); sum += cf[j + 3];
+        }
+        for (float& v : cf) v /= sum;
+        const i64 q0 = (i64) std::ceil(s - (double) h), q1 = (i64) std::floor(s + (double) h);
+        for (i64 q = q0; q <= q1; ++q) {
+            const float w = 0.5f * (1.f + std::cos(kPi * (float) ((double) q - s) / h));
+            float v = 0.f;
+            for (int j = -3; j <= 4; ++j) v += cf[j + 3] * in[(size_t) ((q + p0 + j) & mask)];
+            acc[(size_t) (q & mask)] += w * v; accW[(size_t) (q & mask)] += w;
         }
     }
 
@@ -422,14 +476,19 @@ private:
     {
         const double lim = (double) (cPrev - Tmax);
         while (sNext <= lim) {
-            bool placed = false;
+            double step = 32.0;                                    // tonsuz boşluk: tane yok
             if (markCount > 0) {
                 if (kPtr < markCount - kMarks + 1) kPtr = markCount - kMarks + 1;
-                while (kPtr + 1 < markCount && std::fabs((double) mk(kPtr + 1).pos - sNext) <= std::fabs((double) mk(kPtr).pos - sNext)) ++kPtr;
+                while (kPtr + 1 < markCount && std::fabs(mk(kPtr + 1).pos - sNext) <= std::fabs(mk(kPtr).pos - sNext)) ++kPtr;
                 const Mark& m = mk(kPtr);
-                if (std::fabs((double) m.pos - sNext) <= 0.6 * m.T0) { grain(m, sNext); sNext += m.Ts; placed = true; }
+                if (std::fabs(m.pos - sNext) <= 0.6 * (double) m.T0) {
+                    grain(m, sNext);
+                    // g=0: düz hedef periyodu Ts; g=1: ölçülmüş mark aralığı / oran (Ts=T0 iken Pn) -> birebir kopya
+                    const double rel = std::min(1.25, std::max(0.8, (double) m.Pn / (double) m.T0));
+                    step = (double) m.Ts * ((1.0 - (double) m.g) + (double) m.g * rel);
+                }
             }
-            if (!placed) sNext += 32.0;   // tonsuz boşluk: tane yok
+            sNext += step;
         }
     }
 };
