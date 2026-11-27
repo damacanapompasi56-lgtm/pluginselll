@@ -25,6 +25,25 @@ Atlananlar / sonraki parçalar:
 
 Kaldığım yer: yok, parça tam.
 
+## PARÇA 2A: Elmas kazma knob'ları  (TAMAMLANDI, derlenmedi)
+Yapılanlar:
+- `Source/KazmaKnob.h` (yeni, sadece header, CMake değişmedi): tek yeniden kullanılabilir bileşen. İçinde rotary Slider (çizimi kapalı, sadece fare) + değer kutusu Label + çentik/halka çizimi + `SliderAttachment`. Kullanım: `KazmaKnob (apvts, paramId, ondalık, minimumdaOffYaz)`; yerleşim: `place (Theme::L değer kutusu, Theme::L knob kutusu, pencereÖlçeği)`.
+- Kazma: `knobicinkazma.png` tek görsel, ibre yok. Boyut değişince bir kez `rescaled` ile cache'lenir, her karede sadece döndürülür. Ucu değeri gösterir: dönmemiş görselin ucu sol-üst çapraza baktığı için `Theme::kPickaxeTipAngle = -pi/4`; dönüş = değer açısı - bu açı. Açı aralığı 7:30 -> 4:30 (1.25pi..2.75pi), değer->açı `valueToProportionOfLength` (parametre skew'ını da izler).
+- Aralık hardcode değil: SliderAttachment parametreden alır (speed -10..400, skew dahil).
+- Değer kutusu: çift tık = elle giriş (Enter ile uygular; "off" yazılabilir, geçersiz girişte eski değer döner), shift+sürükle ince ayar (hassasiyet 250 -> 1500, sürükleme başında seçilir).
+- Tolerance (tolC, tolT): minimum değerde "off" (`Theme::kOff`).
+- Bağlar: speed->"speed", note transition->"glide", cents->"tolC", time->"tolT".
+- `Source/Theme.h`: `kPickaxeTipAngle` ve `kOff` eklendi (başka değişiklik yok).
+- `Source/PluginEditor.h/.cpp`: 4 knob üye, `resized()` ile `Theme::L` kutularına yerleşiyor; bu 4 knob'un yer tutucu çerçeve/örnek değer çizimi paint()'ten silindi (etiketler kaldı).
+
+Atlananlar / riskler:
+- Derleme yapılamadı (JUCE kaynağı ve ağ yok). İlk CI build'inde derleme hatası çıkabilir.
+- Shift ince ayarı sürükleme ortasında shift'e basınca devreye girmez.
+- Değer kutusu / halka / çentik renk ve kalınlıkları benim seçimim (taslakta elle çizilmiş dalgalı kutu); gerçek şekil sonraki parçada.
+- Kazma görselinin dönme merkezi görselin ortası; baş sol-üstte olduğu için ibre merkezden hafif kayık görünebilir.
+
+Kaldığım yer: yok. Sıradaki: Parça 2B (vibrato, reference).
+
 ## Notlar sonraki parçalar için
 - Alt kontrol eklerken `setBounds` için `Theme::L::x` kutusunu `getWidth()/Theme::kW` ile ölçekle.
 - Yeni dosya adı eklenirse hem `Assets/`, hem CMake `SOURCES`, hem Theme.h; BinaryData adı = dosya adı, nokta yerine `_`.
