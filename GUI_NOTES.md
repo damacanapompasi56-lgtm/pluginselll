@@ -44,6 +44,21 @@ Atlananlar / riskler:
 
 Kaldığım yer: yok. Sıradaki: Parça 2B (vibrato, reference).
 
+## PARÇA 2B: Vibrato ve reference  (TAMAMLANDI, derlenmedi)
+Yapılanlar:
+- `Source/VibRefControls.h` (yeni, sadece header, namespace `vr`): `ValueBox` (çerçeveli değer kutusu, çift tık = elle giriş), `VibToggle` (on/off, "vibOn"), `VibSlider` (yatay, çizgi + kol olarak elmas kazma, başı yukarı; fare mantığı Slider'ın kendisi), `VibratoControl` (üçünü `vibToggle/vibSlider/vibValue` kutularına oturtur, "vibAmt"), `RefControl` ("-  440  +", "ref"; artı/eksi = `Theme::kRefStep`, ortadaki değer elle girilebilir).
+- Aralıklar parametreden (SliderAttachment). Kazma çizimi cache'li ölçekleme (2A ile aynı yöntem, `vr::drawPick`).
+- `Source/Theme.h`: `kOn`, `kMinus`, `kPlus`, `kRefStep` (=1 Hz) eklendi.
+- `Source/PluginEditor.h/.cpp`: `vibrato`, `refCtl` üyeleri, `resized()` yerleşimi; bu kontrollerin yer tutucu çerçeve/örnek değer çizimi paint()'ten silindi (etiketler kaldı).
+- `KazmaKnob.h` değişmedi; değer kutusu mantığı `ValueBox` ile kopya (ileride KazmaKnob `ValueBox` kullanacak şekilde sadeleşebilir).
+
+Atlananlar / riskler:
+- vibAmt parametresi 0..300 (DSP'ye dokunulmadığı için); kutu/kaydırıcı 0..300 gösterir, istenen 0-100 değil. 0-100 isteniyorsa parametre aralığı değişmeli (DSP kararı).
+- Reference adımı 1 Hz seçildi (parametre ince adımı 0.1); isteniyorsa `Theme::kRefStep`.
+- Kaydırıcı kolu uçlarda birkaç px kırpılabilir.
+
+Kaldığım yer: yok. Sıradaki: Parça 3.
+
 ## Notlar sonraki parçalar için
 - Alt kontrol eklerken `setBounds` için `Theme::L::x` kutusunu `getWidth()/Theme::kW` ile ölçekle.
 - Yeni dosya adı eklenirse hem `Assets/`, hem CMake `SOURCES`, hem Theme.h; BinaryData adı = dosya adı, nokta yerine `_`.
