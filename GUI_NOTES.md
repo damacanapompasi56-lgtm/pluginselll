@@ -126,6 +126,39 @@ Atlananlar / riskler:
 
 Kaldığım yer: yok. Sıradaki: Parça 6.
 
+## PARÇA 6A: Negatif speed modu  (TAMAMLANDI, derlenmedi)
+Yapılanlar:
+- `Theme.h`: `kMagenta/kLight/kDark/kTeal` artık `const` değil, CANLI palet; normal (`kNormal*`) ve "hell palette" (`kHell*`: kızıl/turuncu/yanık siyah/sıcak krem) sabitleri ve `setHell(t)` eklendi. Hiçbir çizim kodu değişmedi (hepsi zaten bu adları okuyor). Süre/genlik sabitleri: `kShakeMs`, `kShakeAmp`, `kHellInMs`, `kHellOutMs`, `kHellFps`.
+- `PluginEditor`: "speed" parametresine `ParameterAttachment`; `< 0` olunca ~450 ms sallanma (çocuklara `setTransform` + arka plan kayması, azalan genlik), ardından 1.2 sn'de palet smoothstep ile hell'e geçer; `>= 0`'a dönünce sallanmadan 0.9 sn'de normale döner. Timer (30 Hz) sadece geçiş sürerken çalışır, bitince `stopTimer()`; yıkıcıda da durur ve palet normale alınır. Editör negatif speed ile açılırsa animasyonsuz doğrudan hell.
+- Label renkleri (kurucuda set edilmişlerdi) geçiş karesinde `recolourLabels` ile yenilenir. `ScaleControls.h`: açılır menü renkleri kurucudan çıkıp menü açılırken set ediliyor (güncel palet).
+
+Atlananlar / riskler:
+- Palet global (`inline` değişken): aynı işlemde birden fazla plugin örneği/editörü açıksa hepsi aynı paleti paylaşır; birinin speed'i negatifse diğerinin editörü de hell'e boyanır, birinin editörü kapanınca palet normale döner. Örnek başına palet ancak tüm çizim kodunu yeniden yazarak mümkün.
+- Geçiş karelerinde editör tam yeniden çizilir (30 Hz, ~1 sn). Sallanma gerçek pencereyi oynatmaz, içeriği oynatır; kenarlar arka planla dolu kalır. Derlenmedi.
+
+Kaldığım yer: yok. Sıradaki: Parça 6B.
+
+## PARÇA 6B: Cila  (TAMAMLANDI, derlenmedi)
+Yapılanlar:
+- Hover/basılı durumları: açılır kutular, bemol/diyez/harf hücreleri, piyano tuşları, vibrato düğmesi, reference -/+ yarıları, key detect sonucu (teal), knob halkası (hover/sürüklerken parlar ve kalınlaşır). Dolgu `Theme::kHoverAlpha`.
+- Yerleşim kontrolü (Theme::L çakışma taraması): giriş etiketi göstergeye biniyordu (455..495'e daraltıldı, metre ekseniyle ortalı), giriş/çıkış metreleri 165 -> 150 yüksekliğe indi (sikicilik etiketine biniyordu), reference etiketi kutuya değiyordu (genişlik 100 -> 90), alt orta yazı kutusu kuruş knob'una biniyordu (420 -> 400). Kasıtlı iç içe olanlar (range kutusu içeriği, değer kutusu/knob 2 px) bırakıldı.
+- CctvView: ilk üretim hemen, sonraki boyut değişimleri boyut 2 timer karesi (~130 ms) sabit kalınca; arada eski görsel gerilerek çizilir (boyutlandırma sürerken piksel döngüsü çalışmaz).
+- Kazma: PNG'nin görünür piksel ağırlık merkezi (0.4227, 0.4227) görsel ortasından (0.5) kayıktı; dönme artık bu noktadan (`Theme::kPickaxePivot`, KazmaKnob + VibSlider).
+
+Atlananlar / riskler:
+- Derlenmedi; hover için `slider.addMouseListener(this,false)` ve `Slider::isMouseOverOrDragging` JUCE davranışına güveniyor. VibSlider kazması hover'da değişmiyor. Boyutlandırma sırasında CCTV birkaç kare bulanık/gergin görünebilir.
+- Pivot ağırlık merkezi (kazma baş tarafı yaklaşık merkezde), sap ucu değil; sap ucundan döndürmek istenirse `kPickaxePivot` farklı x/y ile ayrılmalı.
+
+Kaldığım yer: yok. Sıradaki: yok (6 parça tamam).
+
+## Tasarımı sonradan nasıl değiştiririm
+- Renk: `Source/Theme.h` en üst, `kNormalMagenta/Light/Dark/Teal` (normal) ve `kHell*` (speed < 0 paleti); sadece hex değeri değiştir.
+- Font: `Assets/SFPRODISPLAYBOLD.OTF`'yi aynı adla değiştir; farklı adsa `Theme::kFontRes` (ad, nokta yerine `_`) ve `CMakeLists.txt` `juce_add_binary_data` listesini güncelle.
+- Metin: `Theme.h` "metinler" bölümü (başlık, etiketler, alt yazılar `kFootLeft/kFootMid`) ve `kTip*` (tooltip'ler); başka dosyada metin yok.
+- Görsel: `Assets/` içindeki dosyayı aynı adla değiştir; yeni ad verirsen `Theme::k*Res` + CMake listesi. Kazma değişirse `kPickaxeTipAngle` ve `kPickaxePivot` da.
+- Piksel bayrağı: `Theme::kPixelStyle = true` görselleri yumuşatmadan (piksel piksel) örnekler: kazma, madenciler, CCTV.
+- Yerleşim: `Theme::L` kutuları (1160x650 tasarım uzayı, her şey bununla ölçeklenir).
+
 ## Notlar sonraki parçalar için
 - Alt kontrol eklerken `setBounds` için `Theme::L::x` kutusunu `getWidth()/Theme::kW` ile ölçekle.
 - Yeni dosya adı eklenirse hem `Assets/`, hem CMake `SOURCES`, hem Theme.h; BinaryData adı = dosya adı, nokta yerine `_`.
