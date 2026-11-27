@@ -33,10 +33,13 @@ void photo (Graphics& g, const Image& img, Rectangle<float> r)
 MadenciEditor::MadenciEditor (MadenciProcessor& p)
     : AudioProcessorEditor (&p), proc (p),
       speedKnob (p.apvts, "speed", 1, false), transKnob (p.apvts, "glide", 1, false),
-      centsKnob (p.apvts, "tolC", 0, true),   timeKnob  (p.apvts, "tolT", 0, true)
+      centsKnob (p.apvts, "tolC", 0, true),   timeKnob  (p.apvts, "tolT", 0, true),
+      vibrato (p.apvts), refCtl (p.apvts)
 {
     for (auto* k : { &speedKnob, &transKnob, &centsKnob, &timeKnob })
         addAndMakeVisible (k);
+    addAndMakeVisible (vibrato);
+    addAndMakeVisible (refCtl);
 
     pickaxe   = Theme::image (Theme::kPickaxeRes);
     minerWide = Theme::image (Theme::kMinerWideRes);
@@ -55,6 +58,8 @@ void MadenciEditor::resized()
     transKnob.place (L::transValue, L::transKnob, s);
     centsKnob.place (L::centsValue, L::centsKnob, s);
     timeKnob .place (L::timeValue,  L::timeKnob,  s);
+    vibrato.place (L::vibToggle, L::vibSlider, L::vibValue, s);
+    refCtl.place (L::refBox, s);
 }
 
 void MadenciEditor::paint (Graphics& g)
@@ -99,8 +104,6 @@ void MadenciEditor::paint (Graphics& g)
 
     // reference + yatay madenci
     text (g, Theme::kReference, L::refLabel, 14, Justification::centredRight);
-    slot (g, L::refBox, Theme::kMagenta);
-    text (g, Theme::kSampleRef, L::refBox, 24);
     photo (g, minerWide, L::minerWide);
 
     // speed / note transition
@@ -109,9 +112,6 @@ void MadenciEditor::paint (Graphics& g)
 
     // vibrato
     text (g, Theme::kVibrato, L::vibLabel, 14, Justification::centredLeft);
-    slot (g, L::vibToggle, Theme::kMagenta);   text (g, Theme::kSampleOn, L::vibToggle, 16);
-    slot (g, L::vibSlider, Theme::kMagenta);
-    slot (g, L::vibValue, Theme::kMagenta);    text (g, Theme::kSampleVib, L::vibValue, 24);
 
     // tolerance
     text (g, Theme::kTolerance, L::tolLabel, 14);
