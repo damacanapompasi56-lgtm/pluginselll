@@ -22,6 +22,7 @@ constexpr const char* kFontRes      = "SFPRODISPLAYBOLD_OTF";
 constexpr const char* kPickaxeRes   = "knobicinkazma_png";      // elmas kazma
 constexpr const char* kMinerWideRes = "madenciyatayfoto_png";    // yatay madenci
 constexpr const char* kMinerTallRes = "madencidikeyfoto_jpg";    // dikey madenci
+constexpr float kPickaxeTipAngle = -0.78539816f;                 // knobicinkazma.png dönmeden: ucu sol-üst çapraza (12 yönünden saat yönü, rad) bakar
 
 // ---------------------------------------------------------------- metinler
 constexpr const char* kTitle       = "MADENCITUNE";
@@ -37,6 +38,7 @@ constexpr const char* kTolerance   = "kasma knk";
 constexpr const char* kVibrato     = "zangır zangır";
 constexpr const char* kCents       = "kuruşlar";
 constexpr const char* kTime        = "taym";
+constexpr const char* kOff         = "off";      // tolerance knob'larında minimum değer
 constexpr const char* kFootLeft    = "teknik olarak öndeyim sizden";
 constexpr const char* kFootMid     = "madamcı ee şey benim bi arkadaş var kıtar çalıyor";
 

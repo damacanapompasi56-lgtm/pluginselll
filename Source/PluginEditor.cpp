@@ -30,8 +30,14 @@ void photo (Graphics& g, const Image& img, Rectangle<float> r)
 }
 }
 
-MadenciEditor::MadenciEditor (MadenciProcessor& p) : AudioProcessorEditor (&p), proc (p)
+MadenciEditor::MadenciEditor (MadenciProcessor& p)
+    : AudioProcessorEditor (&p), proc (p),
+      speedKnob (p.apvts, "speed", 1, false), transKnob (p.apvts, "glide", 1, false),
+      centsKnob (p.apvts, "tolC", 0, true),   timeKnob  (p.apvts, "tolT", 0, true)
 {
+    for (auto* k : { &speedKnob, &transKnob, &centsKnob, &timeKnob })
+        addAndMakeVisible (k);
+
     pickaxe   = Theme::image (Theme::kPickaxeRes);
     minerWide = Theme::image (Theme::kMinerWideRes);
     minerTall = Theme::image (Theme::kMinerTallRes);
@@ -40,6 +46,15 @@ MadenciEditor::MadenciEditor (MadenciProcessor& p) : AudioProcessorEditor (&p), 
     setResizeLimits (Theme::kW / 2, Theme::kH / 2, Theme::kW * 2, Theme::kH * 2);
     getConstrainer()->setFixedAspectRatio ((double) Theme::kW / Theme::kH);
     setSize (Theme::kW, Theme::kH);
+}
+
+void MadenciEditor::resized()
+{
+    const float s = (float) getWidth() / (float) Theme::kW;
+    speedKnob.place (L::speedValue, L::speedKnob, s);
+    transKnob.place (L::transValue, L::transKnob, s);
+    centsKnob.place (L::centsValue, L::centsKnob, s);
+    timeKnob .place (L::timeValue,  L::timeKnob,  s);
 }
 
 void MadenciEditor::paint (Graphics& g)
@@ -90,11 +105,7 @@ void MadenciEditor::paint (Graphics& g)
 
     // speed / note transition
     text (g, Theme::kSpeed, L::speedLabel, 14);
-    slot (g, L::speedValue, Theme::kMagenta);  text (g, Theme::kSampleSpeed, L::speedValue, 24);
-    slot (g, L::speedKnob, Theme::kMagenta, true);
     text (g, Theme::kTransition, L::transLabel, 14);
-    slot (g, L::transValue, Theme::kMagenta);  text (g, Theme::kSampleTrans, L::transValue, 24);
-    slot (g, L::transKnob, Theme::kMagenta, true);
 
     // vibrato
     text (g, Theme::kVibrato, L::vibLabel, 14, Justification::centredLeft);
@@ -105,11 +116,7 @@ void MadenciEditor::paint (Graphics& g)
     // tolerance
     text (g, Theme::kTolerance, L::tolLabel, 14);
     text (g, Theme::kCents, L::centsLabel, 12);
-    slot (g, L::centsValue, Theme::kMagenta);  text (g, Theme::kSampleOff, L::centsValue, 16);
-    slot (g, L::centsKnob, Theme::kMagenta, true);
     text (g, Theme::kTime, L::timeLabel, 12);
-    slot (g, L::timeValue, Theme::kMagenta);   text (g, Theme::kSampleOff, L::timeValue, 16);
-    slot (g, L::timeKnob, Theme::kMagenta, true);
 
     // key detect + dikey madenci
     photo (g, minerTall, L::keyPhoto);
