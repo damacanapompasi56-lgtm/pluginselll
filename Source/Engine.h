@@ -29,13 +29,10 @@ inline int nextPow2(int v) { int p = 1; while (p < v) p <<= 1; return p; }
 
 struct EngineParams {
     float refHz = kRefDefault, speed = 0.f, glideMs = 0.f, tolCents = 0.f, tolMs = 0.f, vibPct = 100.f;
-    bool smart = false, vibOn = false;
+    bool vibOn = false;
     int range = kGenericRange;
     bool formantCorrected = kFormantDefault == 0;
     unsigned mask = 0xFFF;  // izinli perde sınıfları, bit0 = C
-    bool slideOn = false;   // TEKNOS'A KAY: nota başlangıcında perde kayması
-    float slideCents = kSlideAmtDefault, slideMs = kSlideTimeDefault;
-    int slideDir = 0;       // 0 = alttan, 1 = üstten
 };
 
 class Engine {
@@ -44,8 +41,6 @@ public:
     std::atomic<float> dispMidi{ -1.f };   // algılanan perde (MIDI, ref'e göre), <0 = yok
     std::atomic<int>   dispTarget{ -1 };   // hedef MIDI notası, -1 = yok
     std::atomic<float> dispCorr{ 0.f };    // uygulanan düzeltme (yarım ton); CI eğri testi okur
-    std::atomic<float> dispIntensity{ 0.5f };  // Smart Retune yoğunluğu 0..1 (0.5 = nötr)
-    std::atomic<float> dispEffSpeed{ 0.f };    // etkin retune süresi (ms), 0..400
     std::atomic<bool>  keyRequest{ false };
     std::atomic<int>   keyState{ 0 };      // 0 boşta, 1 dinliyor, 2 bitti
     std::atomic<int>   keyResult{ -1 };    // 0..11 major, 12..23 minor, -1 = hiç sesli nota yok
@@ -75,15 +70,10 @@ public:
         vibN = std::min(128, std::max(2, (int) std::lround(0.16 / hopSec)));
         vA = 1.f - std::exp(-1.f / (0.006f * (float) sr));      // dry/wet crossfade ~6 ms
         dcR = 1.f - 6.2831853f * 20.f / (float) sr;               // DC blocker ~20 Hz
-        aAtk = 1.f - std::exp(-hopSec / 0.3f);
-        aRel = 1.f - std::exp(-hopSec / 1.5f);
-        aSm = 1.f - std::exp(-hopSec / 0.05f);        // yoğunluk özellikleri: ~50 ms kısa süreli ortalama
-        histDecay = std::exp(-hopSec / 30.f);         // voiced geçmişi: ~30 sn
-        n = decN = 0; decAcc = 0.f; decCnt = 0; prevX = 0.f; hopSumSq = hopSumD2 = 0.f; dcX = dcY = 0.f;
+        n = decN = 0; decAcc = 0.f; decCnt = 0; hopSumSq = 0.f; dcX = dcY = 0.f;
         first = true; started = false; cPrev = 0; voiced = false; unv = 0; jumpCnt = 0; jumpM = 0.f; mi = 0;
-        haveTarget = hadGoal = false; glideLeft = glideTot = 0; slideLeft = slideTot = 0; slideOff = slideStart = 0.f; corr = corr1 = 0.f; goal0 = 0.f; rhoPrev = 1.f; outsideMs = 0.f; vibCount = 0;
-        runActive = false; markCount = 0; kPtr = 0; sNext = 0.0; lastPos = 0.0; vmix = 0.f; dens = densS = 0.5f; medInit = false; histMass = 0.f;
-        for (auto& h : hist) for (float& v : h) v = 0.f;
+        haveTarget = hadGoal = false; glideLeft = glideTot = 0; corr = corr1 = 0.f; goal0 = 0.f; rhoPrev = 1.f; outsideMs = 0.f; vibCount = 0;
+        runActive = false; markCount = 0; kPtr = 0; sNext = 0.0; lastPos = 0.0; vmix = 0.f;
         midiF = 0.f; key.prepare(sr);
     }
 
@@ -96,8 +86,7 @@ public:
         if (std::fabs(a) < 1e-20f) a = 0.f;       // denormal koruması
         dcY = a;
         ain[(size_t) (n & mask)] = a;
-        const float dx = x - prevX; prevX = x;
-        hopSumSq += x * x; hopSumD2 += dx * dx;
+        hopSumSq += x * x;
         decAcc += a;
         if (++decCnt == d) { dec[(size_t) (decN & decMask)] = decAcc / (float) d; ++decN; decAcc = 0.f; decCnt = 0; }
         ++n;
@@ -129,11 +118,11 @@ private:
     double sr = 44100.0, srD = 11025.0;
     int d = 4, TmaxD = 0, Tmax = 0, Wd = 0, H = 128, L = 0, N = 0, vibN = 55, decMask = 0;
     i64 mask = 0;
-    float hopSec = 0.003f, vA = 0.f, aAtk = 0.f, aRel = 0.f;
+    float hopSec = 0.003f, vA = 0.f;
     std::vector<float> in, ain, acc, accW, vmask, dec, yD, nsdf, nsdfF, ncc;
 
     i64 n = 0, decN = 0, cPrev = 0;
-    float decAcc = 0.f, prevX = 0.f, hopSumSq = 0.f, hopSumD2 = 0.f, dcX = 0.f, dcY = 0.f, dcR = 0.997f;
+    float decAcc = 0.f, hopSumSq = 0.f, dcX = 0.f, dcY = 0.f, dcR = 0.997f;
     int decCnt = 0;
 
     // yumuşatılmış parametreler
@@ -148,20 +137,11 @@ private:
     // hedef / düzeltme
     bool haveTarget = false, hadGoal = false;
     int target = 0, lastTarget = 0, glideLeft = 0, glideTot = 0;
-    int slideLeft = 0, slideTot = 0;       // kayma: kalan / toplam hop
-    float slideOff = 0.f, slideStart = 0.f;   // hedefe eklenen geçici ofset (yarım ton), başlangıç değeri
     float goal = 0.f, goal0 = 0.f, corr = 0.f, corr1 = 0.f, rhoPrev = 1.f, outsideMs = 0.f;   // corr1: 2. kademe ön süzgeç, rhoPrev: önceki hop'un Ts/T0 oranı
 
     // vibrato merkezi (kayan ortalama)
     float vibBuf[128] = {}, vibSum = 0.f;
     int vibIdx = 0, vibCount = 0;
-
-    // yoğunluk
-    // Üç özellik (RMS dB, parlaklık Hz, medyan perdeye göre yükseklik st) vokalin kendi son ~30 sn voiced geçmişine göre 0..1'e eşlenir.
-    static constexpr int kBins = 64;
-    float dens = 0.5f, densS = 0.5f, medTrack = 0.f;   // densS: yumuşatılmış, dens: smoothstep'ten geçmiş (tau'da kullanılan)
-    float hist[3][kBins] = {}, histMass = 0.f, histDecay = 1.f, fSm[3] = {}, aSm = 0.f;   // sönümlü histogramlar, toplam ağırlık
-    bool medInit = false;
 
     // PSOLA
     Mark marks[kMarks];
@@ -315,55 +295,6 @@ private:
         return t[2];
     }
 
-    // Yalnız voiced karelerde çağrılır; voiced yokken hiç çağrılmaz -> yoğunluk son değerini tutar.
-    void updateDensity(float rmsDb, float bw)
-    {
-        constexpr float lo[3] = { -70.f, 0.f, -12.f }, hi[3] = { 0.f, 4000.f, 12.f };
-        constexpr float minSpan[3] = { 3.f, 150.f, 0.75f };   // P90-P10 bundan darsa özellik ayırt etmez -> nötr 0.5
-        constexpr float wgt[3] = { 0.5f, 0.25f, 0.25f };      // RMS en ağır
-        const float x[3] = { std::pow(10.f, 0.1f * rmsDb), bw, midiF - medTrack };   // RMS enerji alanında ortalanır
-        for (int k = 0; k < 3; ++k) fSm[k] = histMass == 0.f ? x[k] : fSm[k] + aSm * (x[k] - fSm[k]);
-        const float f[3] = { 10.f * std::log10(fSm[0] + 1e-12f), fSm[1], fSm[2] };
-
-        histMass = histMass * histDecay + 1.f;
-        float s = 0.f;
-        for (int k = 0; k < 3; ++k) {
-            float* h = hist[k];
-            for (int i = 0; i < kBins; ++i) h[i] *= histDecay;
-            h[std::min(kBins - 1, (int) ((fclamp(f[k], lo[k], hi[k]) - lo[k]) / (hi[k] - lo[k]) * (float) kBins))] += 1.f;
-            auto pct = [&](float q) -> float {   // sönümlü histogramdan q. yüzdelik, bin içinde doğrusal
-                const float tgt = q * histMass; float cum = 0.f;
-                for (int i = 0; i < kBins; ++i) {
-                    if (cum + h[i] >= tgt) return lo[k] + (hi[k] - lo[k]) * ((float) i + (h[i] > 0.f ? (tgt - cum) / h[i] : 0.f)) / (float) kBins;
-                    cum += h[i];
-                }
-                return hi[k];
-            };
-            const float p10 = pct(0.1f), p90 = pct(0.9f);
-            s += wgt[k] * (p90 - p10 >= minSpan[k] ? fclamp((f[k] - p10) / (p90 - p10), 0.f, 1.f) : 0.5f);
-        }
-        // geçmiş yetersizken (< ~2 sn voiced) nötr 0.5; ~5 sn'ye kadar yumuşak geçiş
-        const float warm = fclamp((histMass * hopSec - 2.f) / 3.f, 0.f, 1.f);
-        const float raw = 0.5f + warm * (s - 0.5f);
-        densS += (raw > densS ? aAtk : aRel) * (raw - densS);   // attack ~300 ms, release ~1.5 sn
-        dens = densS * densS * (3.f - 2.f * densS);               // smoothstep: kontrast
-    }
-
-    // Etkin retune süresi (ms). Smart kapalıyken eski davranış: max(0, Speed).
-    float effTau() const
-    {
-        float t = std::fmax(0.f, sSpeed);
-        if (P.smart) t += (1.f - dens) * kSmartPadMs;
-        return fclamp(t, 0.f, kRetuneMaxMs);
-    }
-
-    // TEKNOS'A KAY: ofset -start'tan 0'a yarım kosinüsle iner; son hop'ta tam 0. Parametreler başlangıçta kilitlenir (yumuşatma gerekmez).
-    void startSlide()
-    {
-        slideTot = slideLeft = std::max(1, (int) std::lround(fclamp(P.slideMs, kSlideTimeMin, kSlideTimeMax) / (hopSec * 1000.f)));
-        slideStart = slideOff = fclamp(P.slideCents, kSlideAmtMin, kSlideAmtMax) * 0.01f * (P.slideDir ? 1.f : -1.f);
-    }
-
     void addMark(double pos, float T0, float Ts, float g)
     {
         if (markCount > 0 && runActive) mk(markCount - 1).Pn = (float) (pos - lastPos);
@@ -426,8 +357,7 @@ private:
     {
         const float ms = hopSumSq / (float) H;
         const float rmsDb = 10.f * std::log10(ms + 1e-12f);
-        const float bw = std::sqrt(hopSumD2 / (hopSumSq + 1e-12f)) * (float) sr / (2.f * kPi);
-        hopSumSq = hopSumD2 = 0.f;
+        hopSumSq = 0.f;
         if (n < 2 * (i64) Tmax) return;
         const i64 c = n - Tmax;  // pencerenin merkezi: bu konuma kadar işaretler üretilir
         if (!started) { started = true; cPrev = c - H; }
@@ -470,9 +400,6 @@ private:
         // 3) düzeltme
         bool active = false;
         if (voiced) {
-            if (!medInit) { medTrack = midiF; medInit = true; }
-            medTrack += (midiF > medTrack ? 1.f : -1.f) * 0.005f;
-            updateDensity(rmsDb, bw);
 
             if (vibCount == 0) { for (int i = 0; i < vibN; ++i) vibBuf[i] = midiF; vibSum = midiF * (float) vibN; vibIdx = 0; vibCount = 1; }
             vibSum += midiF - vibBuf[vibIdx]; vibBuf[vibIdx] = midiF; vibIdx = (vibIdx + 1) % vibN;
@@ -486,15 +413,10 @@ private:
             else if (cand != target && std::fabs(mSel - (float) cand) + 0.25f < std::fabs(mSel - (float) target)) target = cand;  // histerezis
 
             if (haveTarget) {
-                if (slideLeft > 0) { --slideLeft; slideOff = slideLeft > 0 ? slideStart * 0.5f * (1.f + std::cos(kPi * (1.f - (float) slideLeft / (float) slideTot))) : 0.f; }
                 if (!hadGoal) {
                     goal = (float) target; lastTarget = target; glideLeft = glideTot = 0; hadGoal = true;
-                    slideLeft = 0; slideOff = 0.f;
-                    if (P.slideOn) startSlide();
                 }
                 else if (target != lastTarget) {
-                    // shortcut: hedefler tam yarım ton, bu yüzden eşik yalnız glide ortasında (goal kesirli) anlamlı; başlamış kayma kesilmez, bitene kadar sürer
-                    if (P.slideOn && std::fabs((float) target - goal) >= kSlideMinChangeSemi) startSlide();
                     const float g = fclamp(sGlide, kGlideMin, kGlideMax) * (1.f - hardness);  // sertlikle glide -> 0
                     glideLeft = glideTot = (int) std::lround(g / hopMs); goal0 = goal; lastTarget = target;
                 }
@@ -507,13 +429,13 @@ private:
                 outsideMs = inside ? 0.f : outsideMs + hopMs;
                 const bool hold = inside || (P.tolMs >= 1.f && outsideMs < sTolT);
 
-                float want = hold ? slideOff : 0.f;   // tolerans içinde de kayma duyulur (ofset 0 iken eski davranış)
+                float want = 0.f;
                 if (!hold) {
                     const float vs = P.vibOn ? (sVib / 100.f) * (1.f - hardness) : 0.f;
-                    want = (goal + slideOff - midiF) + vs * fclamp(midiF - center, -1.f, 1.f);
+                    want = (goal - midiF) + vs * fclamp(midiF - center, -1.f, 1.f);
                     want = fclamp(want, -12.f, 12.f);
                 }
-                const float tau = effTau();                      // Speed<0 -> taban 0 ms
+                const float tau = fclamp(std::fmax(0.f, sSpeed), 0.f, kRetuneMaxMs);   // Speed<0 -> taban 0 ms
                 // 2 kademeli (kritik sönümlü) süzgeç: geçiş S eğrisiyle başlar (tek kutup ilk hop'ta en dik, kesik duyulur).
                 // Kademe başına 0.6*tau -> %63 ve %90 noktaları eski tek kutupla aynı: Speed hissi değişmez. tau=0 -> al=1 -> sert.
                 const float al = tau <= 0.f ? 1.f : 1.f - std::exp(-hopMs / (0.6f * tau));
@@ -535,8 +457,6 @@ private:
         dispMidi.store(voiced ? midiF : -1.f);
         dispTarget.store(active ? target : -1);
         dispCorr.store(active ? corr : 0.f);
-        dispIntensity.store(dens);
-        dispEffSpeed.store(effTau());
     }
 
     // Hann pencereli 2T tane: m.pos çevresinden okunur, s'e (kesirli) yerleştirilir. Kesirli kaydırma 8 noktalı

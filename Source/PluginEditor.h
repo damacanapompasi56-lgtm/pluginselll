@@ -36,10 +36,10 @@ private:
     juce::Label keyLabel, noteLabel;
     juce::ComboBox keyBox, scaleBox, rangeBox, formantBox;
     juce::Label formantLabel;
-    juce::ToggleButton smartBtn { "Smart Retune" }, vibBtn { "Vibrato" };
+    juce::ToggleButton vibBtn { "Vibrato" };
     Knob kRef, kSpeed, kGlide, kVib, kTolC, kTolT;
     Piano piano;
     float inLevel = 0.f, outLevel = 0.f;
     std::unique_ptr<CA> keyAtt, scaleAtt, rangeAtt, formantAtt;
-    std::unique_ptr<BA> smartAtt, vibAtt;
+    std::unique_ptr<BA> vibAtt;
 };

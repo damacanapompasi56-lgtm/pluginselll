@@ -100,8 +100,7 @@ MadenciEditor::MadenciEditor (MadenciProcessor& p) : AudioProcessorEditor (&p), 
     addCombo (formantBox, formantAtt, "formant");
     formantLabel.setText ("Formant", dontSendNotification); addAndMakeVisible (formantLabel);
     formantLabel.setColour (Label::textColourId, Colours::white);
-    addAndMakeVisible (smartBtn); addAndMakeVisible (vibBtn);
-    smartAtt = std::make_unique<BA> (proc.apvts, "smart", smartBtn);
+    addAndMakeVisible (vibBtn);
     vibAtt = std::make_unique<BA> (proc.apvts, "vibOn", vibBtn);
 
     addKnob (kRef, "ref", "Reference Hz");   addKnob (kSpeed, "speed", "Speed");
@@ -120,7 +119,6 @@ void MadenciEditor::resized()
     keyBox.setBounds (top.removeFromLeft (70)); top.removeFromLeft (6);
     scaleBox.setBounds (top.removeFromLeft (100)); top.removeFromLeft (6);
     rangeBox.setBounds (top.removeFromLeft (130)); top.removeFromLeft (10);
-    smartBtn.setBounds (top.removeFromLeft (120));
     vibBtn.setBounds (top.removeFromLeft (90));
 
     r.removeFromTop (10);

@@ -30,7 +30,6 @@ AudioProcessorValueTreeState::ParameterLayout MadenciProcessor::makeLayout()
     l.add (std::make_unique<AudioParameterChoice> (ParameterID { "scale", 1 }, "Scale", StringArray { "Major", "Minor", "Chromatic" }, 0));
     l.add (std::make_unique<AudioParameterChoice> (ParameterID { "range", 1 }, "Range",
            StringArray { "Bass", "Baritone", "Tenor", "Alto", "Mezzo Soprano", "Soprano", "Generic" }, mt::kGenericRange));
-    l.add (std::make_unique<AudioParameterBool> (ParameterID { "smart", 1 }, "Smart Retune", false));
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "ref", 1 }, "Reference Hz",
            NormalisableRange<float> (mt::kRefMin, mt::kRefMax, 0.1f), mt::kRefDefault, txt ("Hz", false)));
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "speed", 1 }, "Speed",
@@ -47,13 +46,6 @@ AudioProcessorValueTreeState::ParameterLayout MadenciProcessor::makeLayout()
     for (int i = 0; i < 12; ++i)
         l.add (std::make_unique<AudioParameterBool> (ParameterID { "n" + String (i), 1 }, "Note " + kKeyNames[i], inScale (i, 0, 0)));
     l.add (std::make_unique<AudioParameterChoice> (ParameterID { "formant", 1 }, "Formant", StringArray { "Corrected", "Not Corrected" }, mt::kFormantDefault));   // eski otomasyon sirasi bozulmasin: yeni parametreler hep sona
-    l.add (std::make_unique<AudioParameterBool> (ParameterID { "slideOn", 1 }, String::fromUTF8 ("TEKNO\xC5\x9E'A KAY"), false));
-    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "slideAmount", 1 }, "Slide Amount",
-           NormalisableRange<float> (mt::kSlideAmtMin, mt::kSlideAmtMax, 1.f), mt::kSlideAmtDefault, txt ("c", false)));
-    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "slideTime", 1 }, "Slide Time",
-           NormalisableRange<float> (mt::kSlideTimeMin, mt::kSlideTimeMax, 1.f), mt::kSlideTimeDefault, txt ("ms", false)));
-    l.add (std::make_unique<AudioParameterChoice> (ParameterID { "slideDir", 1 }, "Slide Direction",
-           StringArray { String::fromUTF8 ("Alttan"), String::fromUTF8 ("\xC3\x9C" "stten") }, 0));
     return l;
 }
 
@@ -64,9 +56,8 @@ MadenciProcessor::MadenciProcessor()
 {
     auto raw = [this] (const String& id) { return apvts.getRawParameterValue (id); };
     pRef = raw ("ref"); pSpeed = raw ("speed"); pGlide = raw ("glide"); pTolC = raw ("tolC"); pTolT = raw ("tolT");
-    pVibAmt = raw ("vibAmt"); pVibOn = raw ("vibOn"); pSmart = raw ("smart"); pRange = raw ("range");
+    pVibAmt = raw ("vibAmt"); pVibOn = raw ("vibOn"); pRange = raw ("range");
     pKey = raw ("key"); pScale = raw ("scale"); pFormant = raw ("formant");
-    pSlideOn = raw ("slideOn"); pSlideAmt = raw ("slideAmount"); pSlideTime = raw ("slideTime"); pSlideDir = raw ("slideDir");
     for (int i = 0; i < 12; ++i) pNote[i] = raw ("n" + String (i));
     lastKey = (int) pKey->load(); lastScale = (int) pScale->load();
     startTimerHz (15);
@@ -103,8 +94,7 @@ void MadenciProcessor::processBlock (AudioBuffer<float>& buf, MidiBuffer&)
     mt::EngineParams p;
     p.refHz = pRef->load(); p.speed = pSpeed->load(); p.glideMs = pGlide->load();
     p.tolCents = pTolC->load(); p.tolMs = pTolT->load(); p.vibPct = pVibAmt->load();
-    p.vibOn = pVibOn->load() > 0.5f; p.smart = pSmart->load() > 0.5f; p.range = (int) pRange->load(); p.formantCorrected = (int) pFormant->load() == 0;
-    p.slideOn = pSlideOn->load() > 0.5f; p.slideCents = pSlideAmt->load(); p.slideMs = pSlideTime->load(); p.slideDir = (int) pSlideDir->load();
+    p.vibOn = pVibOn->load() > 0.5f; p.range = (int) pRange->load(); p.formantCorrected = (int) pFormant->load() == 0;
     p.mask = 0;
     for (int i = 0; i < 12; ++i) if (pNote[i]->load() > 0.5f) p.mask |= 1u << i;
     engine.set (p);
