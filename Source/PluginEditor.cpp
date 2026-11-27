@@ -37,7 +37,8 @@ MadenciEditor::MadenciEditor (MadenciProcessor& p)
       vibrato (Theme::kTipVibrato, p.apvts), refCtl (Theme::kTipRef, p.apvts),
       scaleBox (Theme::kTipScale, p.apvts, "scale", Theme::kScaleNames, 3), formantBox (Theme::kTipFormant, p.apvts, "formant", Theme::kFormantOpts, 2),
       keyPick (Theme::kTipScale, p.apvts), piano (Theme::kTipPiano, p.apvts), keyView (Theme::kTipKeyDetect, p.engine), rangeCtl (Theme::kTipRange, p.apvts),
-      pitchDisp (Theme::kTipDisplay, p.engine), inMeter (Theme::kTipIn, p.inPeak), outMeter (Theme::kTipOut, p.outPeak)
+      pitchDisp (Theme::kTipDisplay, p.engine), inMeter (Theme::kTipIn, p.inPeak), outMeter (Theme::kTipOut, p.outPeak),
+      speedAtt (*p.apvts.getParameter ("speed"), [this] (float v) { onSpeed (v); })
 {
     for (auto* k : { &speedKnob, &transKnob, &centsKnob, &timeKnob })
         addAndMakeVisible (k);
@@ -68,6 +69,80 @@ MadenciEditor::MadenciEditor (MadenciProcessor& p)
     setResizeLimits (Theme::kW / 2, Theme::kH / 2, Theme::kW * 2, Theme::kH * 2);
     getConstrainer()->setFixedAspectRatio ((double) Theme::kW / Theme::kH);
     setSize (Theme::kW, Theme::kH);
+
+    speedAtt.sendInitialUpdate();   // editör negatif speed ile açılırsa animasyonsuz doğrudan hell
+    animate = true;
+}
+
+MadenciEditor::~MadenciEditor()
+{
+    stopTimer();
+    Theme::setHell (0.f);   // paleti paylaşılan global olarak normale bırak
+}
+
+namespace
+{
+void recolourLabels (Component& c)   // Label renkleri kurucuda set edilmişti, palet değişince yenile
+{
+    for (auto* ch : c.getChildren())
+    {
+        if (auto* l = dynamic_cast<Label*> (ch))
+        {
+            l->setColour (Label::textColourId, Theme::kLight);
+            l->setColour (Label::textWhenEditingColourId, Theme::kLight);
+            l->setColour (Label::backgroundWhenEditingColourId, Theme::kDark.darker (0.4f));
+            l->setColour (Label::outlineWhenEditingColourId, Theme::kTeal);
+        }
+        recolourLabels (*ch);
+    }
+}
+}
+
+void MadenciEditor::onSpeed (float v)
+{
+    const bool neg = v < 0.f;
+    if (! animate) { hellTarget = neg; hell = neg ? 1.f : 0.f; applyPalette(); return; }
+    if (neg == hellTarget) return;
+    hellTarget = neg;
+    shakeMs = neg ? Theme::kShakeMs : 0.f;      // sallanma sadece girişte
+    if (! neg) { shake = {}; applyShake(); }
+    lastTick = Time::getMillisecondCounterHiRes();
+    startTimerHz (Theme::kHellFps);
+}
+
+void MadenciEditor::timerCallback()
+{
+    const double now = Time::getMillisecondCounterHiRes();
+    const float dt = (float) (now - lastTick);
+    lastTick = now;
+
+    if (shakeMs > 0.f)
+    {
+        shakeMs -= dt;
+        const float amp = Theme::kShakeAmp * ((float) getWidth() / (float) Theme::kW) * jmax (0.f, shakeMs) / Theme::kShakeMs;
+        shake = shakeMs > 0.f ? Point<int> (roundToInt ((rnd.nextFloat() * 2.f - 1.f) * amp), roundToInt ((rnd.nextFloat() * 2.f - 1.f) * amp)) : Point<int>();
+        applyShake();
+        return;
+    }
+    const float step = dt / (hellTarget ? Theme::kHellInMs : Theme::kHellOutMs);
+    hell = hellTarget ? jmin (1.f, hell + step) : jmax (0.f, hell - step);
+    applyPalette();
+    if (hell == (hellTarget ? 1.f : 0.f)) stopTimer();
+}
+
+void MadenciEditor::applyPalette()
+{
+    Theme::setHell (hell * hell * (3.f - 2.f * hell));   // smoothstep
+    recolourLabels (*this);
+    repaint();
+}
+
+void MadenciEditor::applyShake()
+{
+    const auto t = shake == Point<int>() ? AffineTransform() : AffineTransform::translation ((float) shake.x, (float) shake.y);
+    for (auto* c : getChildren())
+        if (c != &tip) c->setTransform (t);
+    repaint();
 }
 
 void MadenciEditor::resized()
@@ -94,6 +169,7 @@ void MadenciEditor::resized()
 
 void MadenciEditor::paint (Graphics& g)
 {
+    g.addTransform (AffineTransform::translation ((float) shake.x, (float) shake.y));   // sallanma
     g.addTransform (AffineTransform::scale ((float) getWidth() / (float) Theme::kW));
     g.fillAll (Theme::kDark);
     g.setImageResamplingQuality (Theme::kPixelStyle ? Graphics::lowResamplingQuality : Graphics::highResamplingQuality);

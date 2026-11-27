@@ -10,11 +10,12 @@ namespace sc
 using APVTS = juce::AudioProcessorValueTreeState;
 
 // Seçili = kTeal dolgu, değilse koyu dolgu + magenta çerçeve
-inline void cell (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& t, bool sel, float s)
+inline void cell (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& t, bool sel, float s, bool hover = false)
 {
     r = r.reduced (2.f * s);
     g.setColour (sel ? Theme::kTeal : Theme::kDark.darker (0.3f));
     g.fillRoundedRectangle (r, 8.f * s);
+    if (hover) { g.setColour ((sel ? Theme::kLight : Theme::kMagenta).withAlpha (Theme::kHoverAlpha)); g.fillRoundedRectangle (r, 8.f * s); }
     g.setColour (sel ? Theme::kTeal : Theme::kMagenta);
     g.drawRoundedRectangle (r, 8.f * s, 1.5f * s);
     g.setColour (sel ? Theme::kDark : Theme::kLight);
@@ -30,19 +31,18 @@ public:
         : count (n), att (*apvts.getParameter (id), [this] (float v) { index = juce::jlimit (0, count - 1, (int) std::lround (v)); repaint(); })
     {
         for (int i = 0; i < n; ++i) labels.add (Theme::str (names[i]));
-        laf.setColour (juce::PopupMenu::backgroundColourId, Theme::kDark.darker (0.3f));
-        laf.setColour (juce::PopupMenu::textColourId, Theme::kLight);
-        laf.setColour (juce::PopupMenu::highlightedBackgroundColourId, Theme::kTeal);
-        laf.setColour (juce::PopupMenu::highlightedTextColourId, Theme::kDark);
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
         att.sendInitialUpdate();
     }
+
+    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
 
     void fit (juce::Rectangle<float> r, float s) { scale = s; laf.h = 20.f * s; setBounds ((r * s).toNearestInt()); }
 
     void paint (juce::Graphics& g) override
     {
-        cell (g, getLocalBounds().toFloat(), {}, false, scale);
+        cell (g, getLocalBounds().toFloat(), {}, false, scale, hover);
         const auto r = getLocalBounds().toFloat().reduced (2.f * scale);
         g.setColour (Theme::kLight);
         g.setFont (Theme::font (r.getHeight() * 0.5f));
@@ -58,6 +58,10 @@ public:
     void mouseDown (const juce::MouseEvent&) override
     {
         juce::PopupMenu m;
+        laf.setColour (juce::PopupMenu::backgroundColourId, Theme::kDark.darker (0.3f));   // canlı palet (hell modu)
+        laf.setColour (juce::PopupMenu::textColourId, Theme::kLight);
+        laf.setColour (juce::PopupMenu::highlightedBackgroundColourId, Theme::kTeal);
+        laf.setColour (juce::PopupMenu::highlightedTextColourId, Theme::kDark);
         m.setLookAndFeel (&laf);
         for (int i = 0; i < count; ++i) m.addItem (i + 1, labels[i], true, i == index);
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMinimumWidth (getWidth()),
@@ -73,6 +77,7 @@ private:
     };
 
     int count, index = 0;
+    bool hover = false;
     float scale = 1.f;
     juce::StringArray labels;
     Laf laf;
@@ -106,27 +111,38 @@ public:
     void paint (juce::Graphics& g) override
     {
         const float w = accR.getWidth() * 0.5f;
-        cell (g, accR.withWidth (w), Theme::str (Theme::kFlat), acc < 0, scale);
-        cell (g, accR.withTrimmedLeft (w), Theme::str (Theme::kSharp), acc > 0, scale);
+        cell (g, accR.withWidth (w), Theme::str (Theme::kFlat), acc < 0, scale, hov == 0);
+        cell (g, accR.withTrimmedLeft (w), Theme::str (Theme::kSharp), acc > 0, scale, hov == 1);
         const float cw = rowR.getWidth() / 7.f;
         for (int i = 0; i < 7; ++i)
             cell (g, { rowR.getX() + (float) i * cw, rowR.getY(), cw, rowR.getHeight() },
-                  juce::String::charToString ((juce::juce_wchar) Theme::kNoteLetters[i]), i == letter, scale);
+                  juce::String::charToString ((juce::juce_wchar) Theme::kNoteLetters[i]), i == letter, scale, hov == 2 + i);
     }
+
+    void mouseMove (const juce::MouseEvent& e) override { setHover (cellAt (e.position)); }
+    void mouseExit (const juce::MouseEvent&) override  { setHover (-1); }
 
     void mouseDown (const juce::MouseEvent& e) override
     {
-        const auto p = e.position;
+        const int c = cellAt (e.position);
+        if (c < 0) return;
         int l = letter, a = acc;
-        if (accR.contains (p))      { const int v = p.x < accR.getCentreX() ? -1 : 1; a = a == v ? 0 : v; }
-        else if (rowR.contains (p)) l = juce::jlimit (0, 6, (int) ((p.x - rowR.getX()) / (rowR.getWidth() / 7.f)));
-        else return;
+        if (c < 2) { const int v = c == 0 ? -1 : 1; a = a == v ? 0 : v; }
+        else l = c - 2;
         letter = l; acc = a;
         att.setValueAsCompleteGesture ((float) pc (l, a));
         repaint();   // aynı perde farklı yazım (C# <-> Db) parametreyi değiştirmez
     }
 
 private:
+    int cellAt (juce::Point<float> p) const   // 0/1: bemol/diyez, 2..8: A..G, -1: yok
+    {
+        if (accR.contains (p)) return p.x < accR.getCentreX() ? 0 : 1;
+        if (rowR.contains (p)) return 2 + juce::jlimit (0, 6, (int) ((p.x - rowR.getX()) / (rowR.getWidth() / 7.f)));
+        return -1;
+    }
+    void setHover (int c) { if (c != hov) { hov = c; repaint(); } }
+
     static constexpr int kNat[7] = { 9, 11, 0, 2, 4, 5, 7 };   // A B C D E F G -> perde sınıfı (kNoteLetters sırası)
     static int pc (int l, int a) { return (kNat[l] + a + 12) % 12; }
 
@@ -137,7 +153,7 @@ private:
         for (int i = 0; i < 7; ++i) if (kNat[i] + 1 == k) { letter = i; acc = 1; return; }
     }
 
-    int letter = 2, acc = 0;   // C, doğal (parametre varsayılanı 0 = C)
+    int letter = 2, acc = 0, hov = -1;   // C, doğal (parametre varsayılanı 0 = C)
     float scale = 1.f;
     juce::Rectangle<float> accR, rowR;
     juce::ParameterAttachment att;
@@ -166,7 +182,7 @@ public:
         for (int w = 0; w < kWhites; ++w)
         {
             const auto k = white (w);
-            g.setColour (on[kWhitePc[w % 7]] ? Theme::kTeal : Theme::kLight);
+            g.setColour ((on[kWhitePc[w % 7]] ? Theme::kTeal : Theme::kLight).interpolatedWith (Theme::kLight, hov == w ? 0.3f : 0.f));
             g.fillRect (k);
             g.setColour (Theme::kDark);
             g.drawRect (k, 1.5f * scale);
@@ -175,7 +191,7 @@ public:
         {
             if (! hasBlack (w)) continue;
             const auto k = black (w);
-            g.setColour (on[kWhitePc[w % 7] + 1] ? Theme::kTeal.darker (0.4f) : Theme::kDark.darker (0.6f));
+            g.setColour ((on[kWhitePc[w % 7] + 1] ? Theme::kTeal.darker (0.4f) : Theme::kDark.darker (0.6f)).interpolatedWith (Theme::kLight, hov == 100 + w ? 0.3f : 0.f));
             g.fillRect (k);
             g.setColour (Theme::kDark);
             g.drawRect (k, 1.5f * scale);
@@ -186,17 +202,25 @@ public:
 
     void mouseDown (const juce::MouseEvent& e) override
     {
-        int pc = -1;
-        for (int w = 0; w < kWhites - 1 && pc < 0; ++w)
-            if (hasBlack (w) && black (w).contains (e.position)) pc = kWhitePc[w % 7] + 1;
-        if (pc < 0) pc = kWhitePc[juce::jlimit (0, kWhites - 1, (int) (e.position.x / (getWidth() / (float) kWhites))) % 7];
+        const int pc = pcOf (keyAt (e.position));
         att[(size_t) pc]->setValueAsCompleteGesture (on[pc] ? 0.f : 1.f);
     }
+
+    void mouseMove (const juce::MouseEvent& e) override { setHover (keyAt (e.position)); }
+    void mouseExit (const juce::MouseEvent&) override  { setHover (-1); }
 
 private:
     static constexpr int kWhites = 10;
     static constexpr int kWhitePc[7] = { 0, 2, 4, 5, 7, 9, 11 };
     static bool hasBlack (int w) { return w % 7 != 2 && w % 7 != 6; }   // E ve B'den sonra siyah tuş yok
+    int keyAt (juce::Point<float> p) const
+    {
+        for (int w = 0; w < kWhites - 1; ++w)
+            if (hasBlack (w) && black (w).contains (p)) return 100 + w;
+        return juce::jlimit (0, kWhites - 1, (int) (p.x / ((float) getWidth() / (float) kWhites)));
+    }
+    static int pcOf (int k) { return k >= 100 ? kWhitePc[(k - 100) % 7] + 1 : kWhitePc[k % 7]; }
+    void setHover (int k) { if (k != hov) { hov = k; repaint(); } }
 
     juce::Rectangle<float> white (int w) const { const float ww = (float) getWidth() / kWhites; return { (float) w * ww, 0.f, ww, (float) getHeight() }; }
     juce::Rectangle<float> black (int w) const
@@ -206,6 +230,7 @@ private:
     }
 
     bool on[12] = {};
+    int hov = -1;   // beyaz tuş: w, siyah tuş: 100 + w
     float scale = 1.f;
     std::array<std::unique_ptr<juce::ParameterAttachment>, 12> att;
 };
@@ -237,10 +262,13 @@ public:
         g.setFont (Theme::font (26.f * scale));
         g.drawText (Theme::str (Theme::kKeyDetect), labelR, juce::Justification::centredLeft);
         g.setFont (Theme::font (22.f * scale));
+        g.setColour (hover ? Theme::kTeal : Theme::kLight);
         g.drawText (shown, resultR, juce::Justification::centredLeft);
     }
 
     bool hitTest (int x, int y) override { const juce::Point<float> p ((float) x, (float) y); return labelR.contains (p) || resultR.contains (p); }
+    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
 
     void mouseDown (const juce::MouseEvent&) override
     {
@@ -259,6 +287,7 @@ private:
 
     mt::Engine& eng;
     juce::String shown = Theme::str (Theme::kNoDetect);
+    bool hover = false;
     juce::Rectangle<float> labelR, resultR;
     float scale = 1.f;
 };

@@ -17,6 +17,7 @@ public:
         slider.setRotaryParameters (kStart, kEnd, true);
         slider.onValueChange = [this] { refresh(); };
         addAndMakeVisible (slider);
+        slider.addMouseListener (this, false);   // hover/basılı halka için
 
         valueBox.setJustificationType (juce::Justification::centred);
         valueBox.setEditable (false, true, false);   // sadece çift tıkla düzenlenir
@@ -45,6 +46,10 @@ public:
         slider.setBounds (knobRect.toNearestInt());
     }
 
+    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+    void mouseExit (const juce::MouseEvent&) override  { repaint(); }
+    void mouseUp (const juce::MouseEvent&) override    { repaint(); }
+
     void paint (juce::Graphics& g) override
     {
         // değer kutusu çerçevesi
@@ -67,8 +72,9 @@ public:
         }
 
         // halka
-        g.setColour (Theme::kMagenta);
-        g.drawEllipse (juce::Rectangle<float> (r * 1.56f, r * 1.56f).withCentre (c), 1.5f * scale);
+        const bool hot = slider.isMouseOverOrDragging();
+        g.setColour (hot ? Theme::kMagenta.brighter (0.4f) : Theme::kMagenta);
+        g.drawEllipse (juce::Rectangle<float> (r * 1.56f, r * 1.56f).withCentre (c), (hot ? 2.5f : 1.5f) * scale);
 
         // kazma: bir kez ölçeklenir (cache), her karede sadece döner
         if (pickaxe.isNull()) return;
@@ -81,7 +87,7 @@ public:
         const float prop = (float) slider.valueToProportionOfLength (slider.getValue());
         const float ang  = kStart + (kEnd - kStart) * prop;
         g.setImageResamplingQuality (q);
-        g.drawImageTransformed (cache, juce::AffineTransform::translation ((float) -px * 0.5f, (float) -px * 0.5f)
+        g.drawImageTransformed (cache, juce::AffineTransform::translation ((float) -px * Theme::kPickaxePivot, (float) -px * Theme::kPickaxePivot)
                                            .scaled (1.f / phys)
                                            .rotated (ang - Theme::kPickaxeTipAngle)
                                            .translated (c.x, c.y));

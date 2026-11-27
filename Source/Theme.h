@@ -11,10 +11,22 @@ constexpr int  kW = 1160, kH = 650;     // tasarım uzayı; pencere bununla oran
 constexpr bool kPixelStyle = false;     // piksel stili bayrağı (şimdilik sadece görsel örnekleme kalitesi)
 
 // ---------------------------------------------------------------- renkler
-inline const juce::Colour kMagenta { 0xffbf2ead };
-inline const juce::Colour kLight   { 0xffc5c5c5 };
-inline const juce::Colour kDark    { 0xff3f3f3f };
-inline const juce::Colour kTeal    { 0xff1ac5af };
+// Normal palet (taslak) ve "hell palette" (speed < 0). Çizim kodu kMagenta/kLight/kDark/kTeal'i okur;
+// bunlar canlı paletin değerleridir ve setHell() ile normal <-> hell arasında karışır (sadece ana thread).
+inline const juce::Colour kNormalMagenta { 0xffbf2ead }, kNormalLight { 0xffc5c5c5 }, kNormalDark { 0xff3f3f3f }, kNormalTeal { 0xff1ac5af };
+inline const juce::Colour kHellMagenta   { 0xffff0a3c }, kHellLight   { 0xffffd2bd }, kHellDark   { 0xff1c0707 }, kHellTeal   { 0xffff6a00 };
+inline juce::Colour kMagenta = kNormalMagenta, kLight = kNormalLight, kDark = kNormalDark, kTeal = kNormalTeal;
+// t: 0 = normal, 1 = hell
+inline void setHell (float t)
+{
+    kMagenta = kNormalMagenta.interpolatedWith (kHellMagenta, t);
+    kLight   = kNormalLight.interpolatedWith (kHellLight, t);
+    kDark    = kNormalDark.interpolatedWith (kHellDark, t);
+    kTeal    = kNormalTeal.interpolatedWith (kHellTeal, t);
+}
+constexpr float kShakeMs = 450.f, kShakeAmp = 7.f;   // negatif speed'e girerken sallanma süresi / en büyük kayma (tasarım px)
+constexpr float kHellInMs = 1200.f, kHellOutMs = 900.f;   // palet geçiş süreleri
+constexpr int   kHellFps = 30;
 
 // ---------------------------------------------------------------- dosyalar
 // BinaryData adı = dosya adı, nokta yerine "_" (Assets/ klasörü, CMakeLists.txt'te listeli)
@@ -69,6 +81,10 @@ constexpr const char* kFormantOpts[2] = { "corrected", "not corrected" };       
 constexpr const char* kKeyNames[12]   = { "c", "c#", "d", "d#", "e", "f", "f#", "g", "g#", "a", "a#", "b" };   // "key" parametresi sırası
 constexpr const char* kMajor       = "majör";
 constexpr const char* kMinor       = "minör";
+// Parça 6B
+constexpr float kPickaxePivot = 0.4227f;   // knobicinkazma.png'nin ağırlık merkezi (görsel genişliğinin oranı, x ve y aynı); dönme bu noktadan
+constexpr float kHoverAlpha   = 0.25f;     // hover dolgusu (basılıyken 2x)
+
 // Parça 5: tooltip metinleri ve boyutları
 constexpr int   kTipFont    = 15;       // px (tooltip ekran uzayında, pencere ölçeğinden bağımsız)
 constexpr int   kTipMaxW    = 280;      // px, kutunun en geniş hali
@@ -109,10 +125,10 @@ inline const R scaleLabel  { 50, 66, 300, 56 };
 inline const R scaleBox    { 50, 125, 215, 50 },   accBox     { 298, 128, 105, 48 };
 inline const R noteRow     { 62, 198, 285, 55 };
 inline const R piano       { 20, 265, 750, 135 };
-inline const R inLabel     { 447, 40, 60, 22 },    inMeter    { 468, 70, 14, 165 };
-inline const R outLabel    { 785, 40, 60, 22 },    outMeter   { 808, 70, 14, 165 };
+inline const R inLabel     { 455, 40, 40, 22 },    inMeter    { 468, 70, 14, 150 };
+inline const R outLabel    { 785, 40, 60, 22 },    outMeter   { 808, 70, 14, 150 };
 inline const R display     { 495, 40, 270, 150 },  centerTitle { 495, 205, 270, 36 };
-inline const R refLabel    { 940, 6, 100, 24 },    refBox     { 1035, 5, 100, 40 };
+inline const R refLabel    { 940, 6, 90, 24 },    refBox     { 1035, 5, 100, 40 };
 inline const R minerWide   { 870, 50, 265, 150 };
 inline const R speedLabel  { 800, 222, 115, 24 },  speedValue { 800, 252, 115, 38 },  speedKnob { 805, 292, 105, 98 };
 inline const R transLabel  { 960, 222, 125, 24 },  transValue { 960, 252, 125, 38 },  transKnob { 975, 292, 105, 98 };
@@ -126,7 +142,7 @@ inline const R rangeChoice { 530, 475, 255, 40 },  rangeInfo   { 530, 522, 255, 
 inline const R keyPhoto    { 35, 438, 105, 174 };
 inline const R keyLabel    { 180, 435, 270, 40 },  keyResult  { 185, 505, 270, 40 };
 inline const R rangeLabel  { 515, 428, 285, 34 },  rangeBox   { 515, 465, 285, 105 };
-inline const R footLeft    { 160, 603, 300, 18 },  footMid    { 462, 603, 420, 18 };
+inline const R footLeft    { 160, 603, 300, 18 },  footMid    { 462, 603, 400, 18 };
 }
 
 // ---------------------------------------------------------------- yardımcılar

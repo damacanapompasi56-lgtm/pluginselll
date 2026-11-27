@@ -35,7 +35,8 @@ public:
         const auto b = getLocalBounds().toFloat();
         const float phys = g.getInternalContext().getPhysicalPixelScaleFactor();
         const int px = juce::jmax (1, juce::roundToInt (b.getWidth() * phys)), py = juce::jmax (1, juce::roundToInt (b.getHeight() * phys));
-        if (px != cw || py != ch) rebuild (px, py, phys);
+        physLast = phys;
+        if (cw == 0) rebuild (px, py, phys);   // ilk üretim; sonraki boyut değişimleri timer'da, boyutlandırma bitince (o zamana kadar eski görsel gerilir)
 
         g.fillAll (Theme::kDark);
         g.drawImage (base, b.expanded (2.f).translated (jx, jy));           // 2 px taşma: kayma kenarı açmasın
@@ -53,6 +54,12 @@ public:
 private:
     void timerCallback() override
     {
+        const int px = juce::jmax (1, juce::roundToInt ((float) getWidth() * physLast)), py = juce::jmax (1, juce::roundToInt ((float) getHeight() * physLast));
+        if (cw > 0 && (px != cw || py != ch))
+        {
+            if (px == lastPx && py == lastPy) rebuild (px, py, physLast);   // boyut iki karedir sabit: boyutlandırma bitti
+            else { lastPx = px; lastPy = py; }
+        }
         noiseIdx = rnd.nextInt (4); ox = rnd.nextInt (64); oy = rnd.nextInt (64);
         flicker = rnd.nextFloat() * 0.07f;
         const bool shake = rnd.nextFloat() < 0.15f;   // ara sıra 1 px kayma
@@ -90,7 +97,7 @@ private:
 
     juce::Image src, base, overlay, noise[4];
     juce::Random rnd;
-    int cw = 0, ch = 0, noiseIdx = 0, ox = 0, oy = 0;
-    float scale = 1.f, jx = 0.f, jy = 0.f, flicker = 0.f;
+    int cw = 0, ch = 0, lastPx = 0, lastPy = 0, noiseIdx = 0, ox = 0, oy = 0;
+    float physLast = 1.f, scale = 1.f, jx = 0.f, jy = 0.f, flicker = 0.f;
 };
 } // namespace cctv

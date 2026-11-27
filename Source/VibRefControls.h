@@ -17,7 +17,7 @@ inline void drawPick (juce::Graphics& g, const juce::Image& src, juce::Image& ca
     const auto  q    = Theme::kPixelStyle ? juce::Graphics::lowResamplingQuality : juce::Graphics::highResamplingQuality;
     if (cache.getWidth() != px) cache = src.rescaled (px, px, q);
     g.setImageResamplingQuality (q);
-    g.drawImageTransformed (cache, juce::AffineTransform::translation ((float) -px * 0.5f, (float) -px * 0.5f)
+    g.drawImageTransformed (cache, juce::AffineTransform::translation ((float) -px * Theme::kPickaxePivot, (float) -px * Theme::kPickaxePivot)
                                        .scaled (1.f / phys).rotated (rot).translated (c.x, c.y));
 }
 
@@ -78,11 +78,12 @@ public:
     VibToggle() : juce::Button ("vib") { setClickingTogglesState (true); }
     float scale = 1.f;
 
-    void paintButton (juce::Graphics& g, bool, bool) override
+    void paintButton (juce::Graphics& g, bool over, bool down) override
     {
         const auto r = getLocalBounds().toFloat().reduced (scale);
         const bool on = getToggleState();
         if (on) { g.setColour (Theme::kMagenta.withAlpha (0.35f)); g.fillRoundedRectangle (r, 8.f * scale); }
+        if (over || down) { g.setColour (Theme::kMagenta.withAlpha (Theme::kHoverAlpha * (down ? 2.f : 1.f))); g.fillRoundedRectangle (r, 8.f * scale); }
         g.setColour (Theme::kMagenta);
         g.drawRoundedRectangle (r, 8.f * scale, 1.5f * scale);
         g.setColour (on ? Theme::kLight : Theme::kLight.withAlpha (0.5f));
@@ -177,11 +178,23 @@ public:
         g.fillRoundedRectangle (r, 8.f * scale);
         g.setColour (Theme::kMagenta);
         g.drawRoundedRectangle (r.reduced (scale), 8.f * scale, 1.5f * scale);
+        if (hov != 0)
+        {
+            g.setColour (Theme::kMagenta.withAlpha (Theme::kHoverAlpha));
+            g.fillRoundedRectangle ((hov < 0 ? r.withWidth (r.getWidth() / 4) : r.withTrimmedLeft (r.getWidth() * 0.75f)).reduced (scale), 8.f * scale);
+        }
         g.setColour (Theme::kLight);
         g.setFont (Theme::font (r.getHeight() * 0.6f));
         g.drawText (Theme::str (Theme::kMinus), r.withWidth (r.getWidth() / 4), juce::Justification::centred);
         g.drawText (Theme::str (Theme::kPlus), r.withTrimmedLeft (r.getWidth() * 0.75f), juce::Justification::centred);
     }
+
+    void mouseMove (const juce::MouseEvent& e) override
+    {
+        const int h = e.x < getWidth() / 4 ? -1 : e.x > getWidth() * 3 / 4 ? 1 : 0;
+        if (h != hov) { hov = h; repaint(); }
+    }
+    void mouseExit (const juce::MouseEvent&) override { hov = 0; repaint(); }
 
     void mouseDown (const juce::MouseEvent& e) override
     {
@@ -193,6 +206,7 @@ private:
     juce::Slider slider;
     ValueBox box;
     float scale = 1.f;
+    int hov = 0;   // -1: eksi, 1: artı üstünde
     std::unique_ptr<APVTS::SliderAttachment> att;
 };
 } // namespace vr
