@@ -20,6 +20,13 @@ FetchContent_Declare(JUCE
   GIT_SHALLOW ON)
 FetchContent_MakeAvailable(JUCE)
 
+# --- Gömülü varlıklar (font + görseller) -> BinaryData.h, adlar Source/Theme.h'da ---
+juce_add_binary_data(MadenciAssets SOURCES
+  Assets/SFPRODISPLAYBOLD.OTF
+  Assets/knobicinkazma.png
+  Assets/madenciyatayfoto.png
+  Assets/madencidikeyfoto.jpg)
+
 juce_add_plugin(MadenciTune
   COMPANY_NAME "Madenci"
   PLUGIN_MANUFACTURER_CODE Mdnc
@@ -36,6 +43,9 @@ target_sources(MadenciTune PRIVATE
   Source/PluginProcessor.cpp
   Source/PluginEditor.cpp)
 target_include_directories(MadenciTune PRIVATE Source)
+if(MSVC)
+  target_compile_options(MadenciTune PRIVATE /utf-8)   # Theme.h'daki Türkçe UTF-8 metinler için
+endif()
 
 target_compile_definitions(MadenciTune PUBLIC
   JUCE_WEB_BROWSER=0
@@ -44,5 +54,5 @@ target_compile_definitions(MadenciTune PUBLIC
   JUCE_DISPLAY_SPLASH_SCREEN=0)
 
 target_link_libraries(MadenciTune
-  PRIVATE juce::juce_audio_utils
+  PRIVATE juce::juce_audio_utils MadenciAssets
   PUBLIC juce::juce_recommended_config_flags)
