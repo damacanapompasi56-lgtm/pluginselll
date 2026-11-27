@@ -32,17 +32,36 @@ void photo (Graphics& g, const Image& img, Rectangle<float> r)
 
 MadenciEditor::MadenciEditor (MadenciProcessor& p)
     : AudioProcessorEditor (&p), proc (p),
-      speedKnob (p.apvts, "speed", 1, false), transKnob (p.apvts, "glide", 1, false),
-      centsKnob (p.apvts, "tolC", 0, true),   timeKnob  (p.apvts, "tolT", 0, true),
-      vibrato (p.apvts), refCtl (p.apvts)
+      speedKnob (Theme::kTipSpeed, p.apvts, "speed", 1, false), transKnob (Theme::kTipTransition, p.apvts, "glide", 1, false),
+      centsKnob (Theme::kTipCents, p.apvts, "tolC", 0, true),   timeKnob  (Theme::kTipTime, p.apvts, "tolT", 0, true),
+      vibrato (Theme::kTipVibrato, p.apvts), refCtl (Theme::kTipRef, p.apvts),
+      scaleBox (Theme::kTipScale, p.apvts, "scale", Theme::kScaleNames, 3), formantBox (Theme::kTipFormant, p.apvts, "formant", Theme::kFormantOpts, 2),
+      keyPick (Theme::kTipScale, p.apvts), piano (Theme::kTipPiano, p.apvts), keyView (Theme::kTipKeyDetect, p.engine), rangeCtl (Theme::kTipRange, p.apvts),
+      pitchDisp (Theme::kTipDisplay, p.engine), inMeter (Theme::kTipIn, p.inPeak), outMeter (Theme::kTipOut, p.outPeak)
 {
     for (auto* k : { &speedKnob, &transKnob, &centsKnob, &timeKnob })
         addAndMakeVisible (k);
     addAndMakeVisible (vibrato);
     addAndMakeVisible (refCtl);
+    for (auto* c : std::initializer_list<Component*> { &scaleBox, &formantBox, &keyPick, &piano, &keyView, &rangeCtl, &pitchDisp, &inMeter, &outMeter, &cctvView })
+        addAndMakeVisible (c);
+
+    // etiket alanları da tooltip versin (kontrollerin üstüne binmezler)
+    const auto zone = [this] (const Theme::R& r, const char* t)
+    {
+        zones.push_back ({ r, std::make_unique<tt::Tip<Component>> (t) });
+        addAndMakeVisible (*zones.back().c);
+    };
+    zone (L::scaleLabel, Theme::kTipScale);     zone (L::formantLabel, Theme::kTipFormant);
+    zone (L::rangeLabel, Theme::kTipRange);     zone (L::refLabel, Theme::kTipRef);
+    zone (L::speedLabel, Theme::kTipSpeed);     zone (L::transLabel, Theme::kTipTransition);
+    zone (L::vibLabel, Theme::kTipVibrato);     zone (L::tolLabel, Theme::kTipTolerance);
+    zone (L::centsLabel, Theme::kTipCents);     zone (L::timeLabel, Theme::kTipTime);
+    zone (L::inLabel, Theme::kTipIn);           zone (L::outLabel, Theme::kTipOut);
+    tip.setLookAndFeel (&tipLaf);
+    tip.toFront (false);   // sonradan eklenen çocukların altında kalmasın
 
     pickaxe   = Theme::image (Theme::kPickaxeRes);
-    minerWide = Theme::image (Theme::kMinerWideRes);
     minerTall = Theme::image (Theme::kMinerTallRes);
 
     setResizable (true, true);
@@ -60,6 +79,17 @@ void MadenciEditor::resized()
     timeKnob .place (L::timeValue,  L::timeKnob,  s);
     vibrato.place (L::vibToggle, L::vibSlider, L::vibValue, s);
     refCtl.place (L::refBox, s);
+    scaleBox.fit (L::scaleBox, s);
+    formantBox.fit (L::formantBox, s);
+    keyPick.place (L::accBox, L::noteRow, s);
+    piano.place (L::piano, s);
+    keyView.place (L::keyLabel, L::keyResult, s);
+    rangeCtl.place (L::rangeBox, L::rangeChoice, L::rangeInfo, s);
+    pitchDisp.place (L::display, s);
+    inMeter.place (L::inMeter, s);
+    outMeter.place (L::outMeter, s);
+    cctvView.place (L::minerWide, s);
+    for (auto& z : zones) z.c->setBounds ((z.r * s).toNearestInt());
 }
 
 void MadenciEditor::paint (Graphics& g)
@@ -72,39 +102,19 @@ void MadenciEditor::paint (Graphics& g)
     text (g, Theme::kTitle, L::titleText, 24, Justification::centredLeft);
     photo (g, pickaxe, L::titleIcon);
 
-    // scale + nota harfleri
+    // scale etiketi + formant etiketi (kutular, harfler, piyano ayrı bileşenler)
     text (g, Theme::kScale, L::scaleLabel, 40, Justification::centredLeft);
-    slot (g, L::scaleBox, Theme::kMagenta);
-    text (g, Theme::kSampleScale, L::scaleBox.withTrimmedRight (55), 30);
-    for (int i = 0; i < 2; ++i)
-    {
-        auto c = L::accBox.withWidth (L::accBox.getWidth() / 2).translated ((float) i * L::accBox.getWidth() / 2, 0.f);
-        slot (g, c, Theme::kMagenta);
-        text (g, i == 0 ? Theme::kSampleFlat : Theme::kSampleSharp, c, 28);
-    }
-    const float cw = L::noteRow.getWidth() / 7.f;
-    for (int i = 0; i < 7; ++i)
-    {
-        auto c = Rectangle<float> (L::noteRow.getX() + (float) i * cw, L::noteRow.getY(), cw, L::noteRow.getHeight());
-        slot (g, c, Theme::kMagenta);
-        text (g, String (Theme::kNoteLetters).substring (i, i + 1).toRawUTF8(), c, 36);
-    }
-
-    // piyano
-    slot (g, L::piano, Theme::kTeal);
+    text (g, Theme::kFormant, L::formantLabel, 16, Justification::centredLeft);
 
     // giriş / çıkış ölçerleri
-    text (g, Theme::kIn, L::inLabel, 14);   slot (g, L::inMeter, Theme::kTeal);
-    text (g, Theme::kOut, L::outLabel, 14); slot (g, L::outMeter, Theme::kTeal);
+    text (g, Theme::kIn, L::inLabel, 14);
+    text (g, Theme::kOut, L::outLabel, 14);
 
     // orta ekran
-    slot (g, L::display, Theme::kTeal);
-    text (g, Theme::kSampleNote, L::display, 110);
     text (g, Theme::kTitle, L::centerTitle, 30);
 
     // reference + yatay madenci
     text (g, Theme::kReference, L::refLabel, 14, Justification::centredRight);
-    photo (g, minerWide, L::minerWide);
 
     // speed / note transition
     text (g, Theme::kSpeed, L::speedLabel, 14);
@@ -119,15 +129,14 @@ void MadenciEditor::paint (Graphics& g)
     text (g, Theme::kTime, L::timeLabel, 12);
 
     // key detect + dikey madenci
-    photo (g, minerTall, L::keyPhoto);
-    text (g, Theme::kKeyDetect, L::keyLabel, 26, Justification::centredLeft);
-    text (g, Theme::kSampleKey, L::keyResult, 22, Justification::centredLeft);
+    photo (g, minerTall, L::keyPhoto.reduced (Theme::kPhotoFrame));
+    g.setColour (Theme::kMagenta);
+    g.drawRoundedRectangle (L::keyPhoto.reduced (Theme::kPhotoFrame * 0.5f), 6.f, Theme::kPhotoFrame * 0.6f);
 
     // range
     text (g, Theme::kRange, L::rangeLabel, 26);
-    slot (g, L::rangeBox, Theme::kTeal);
 
     // alt yazılar
     text (g, Theme::kFootLeft, L::footLeft, 10, Justification::centredLeft);
-    text (g, Theme::kFootMid, L::footMid, 10);
+    text (g, Theme::kFootMid, L::footMid, 10, Justification::centredLeft);
 }

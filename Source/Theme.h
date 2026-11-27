@@ -60,6 +60,47 @@ constexpr const char* kSampleOn    = "on";
 constexpr const char* kSampleOff   = "off";
 constexpr const char* kNoteLetters = "ABCDEFG";
 
+// Parça 3A: scale / formant / key detect metinleri
+constexpr const char* kFlat        = "b";
+constexpr const char* kSharp       = "#";
+constexpr const char* kScaleNames[3]  = { "major", "minor", "chromatic" };      // "scale" parametresi sırası: Major, Minor, Chromatic
+constexpr const char* kFormant     = "formant";
+constexpr const char* kFormantOpts[2] = { "corrected", "not corrected" };       // "formant" parametresi sırası: Corrected, Not Corrected
+constexpr const char* kKeyNames[12]   = { "c", "c#", "d", "d#", "e", "f", "f#", "g", "g#", "a", "a#", "b" };   // "key" parametresi sırası
+constexpr const char* kMajor       = "majör";
+constexpr const char* kMinor       = "minör";
+// Parça 5: tooltip metinleri ve boyutları
+constexpr int   kTipFont    = 15;       // px (tooltip ekran uzayında, pencere ölçeğinden bağımsız)
+constexpr int   kTipMaxW    = 280;      // px, kutunun en geniş hali
+constexpr int   kTipDelayMs = 400;
+constexpr const char* kTipKeyDetect  = "Paylox'un harika kulaklarıyla sesini dinlemene izin ver. Sana hemen vokalinin hangi tonda okunduğunu söyler. Başlatmak için tıkla.";
+constexpr const char* kTipRange      = "Vokalinin ses türünü seç. Tuner o türün nota aralığının dışına taşmaz.";
+constexpr const char* kTipSpeed      = "Düzeltmenin ne kadar hızlı ve sert uygulanacağı (ms). Düşük değer notaya anında yapışır, yani robotik 'tune' sesi; yüksek değer yavaş ve doğal çeker. Sıfırın altı daha da sert.";
+constexpr const char* kTipTransition = "Bir notadan diğerine geçişin ne kadar yumuşak olacağı (ms). Düşükse nottan notaya sekersin, yüksekse kayarak geçersin. Hız çok sert ayarlıysa etkisi azalır.";
+constexpr const char* kTipTolerance  = "Tuner'ın ne zaman karışacağını belirler. Kuruşlar: hedef notadan kaç cent sapmaya göz yumulacağı. Taym: tolerans dışında ne kadar kalınca düzeltmenin başlayacağı.";
+constexpr const char* kTipCents      = "Hedef notadan en fazla kaç cent sapmaya kadar dokunulmayacağı. 'off': küçücük sapma bile düzeltilir.";
+constexpr const char* kTipTime       = "Tolerans dışında en az kaç ms kalırsa düzeltmenin devreye gireceği. 'off': bekleme yok.";
+constexpr const char* kTipVibrato    = "Vibrato miktarı. Açıkken sesindeki doğal titreşim korunur: yüzde 100 olduğu gibi bırakır, altı azaltır, üstü abartır. Kapalıyken titreşim de düzeltilip düzleşir.";
+constexpr const char* kTipRef        = "Referans frekansı: A notasının kaç Hz olduğu (A=440). Parçanın geri kalanı farklı akortluysa buradan uydur.";
+constexpr const char* kTipScale      = "Skalayı (major, minor, chromatic) ve ana notayı seç. Tuner sesini sadece bu skaladaki notalara çeker.";
+constexpr const char* kTipFormant    = "Vokalin tınısını korur: 'corrected' perde değişse de karakteri sabit tutar, 'not corrected' tınının perdeyle birlikte kaymasına izin verir.";
+constexpr const char* kTipIn         = "Tuner'a giren sesin seviyesi. Magenta'ya vuruyorsa patlamaya yakın, kaynağın sesini kıs.";
+constexpr const char* kTipOut        = "Tuner'dan çıkan sesin seviyesi. Magenta'ya vuruyorsa patlamaya yakın, kanalın sesini kıs.";
+constexpr const char* kTipDisplay    = "Şu an söylediğin (veya hedeflenen) nota. Halka, hedeften kaç cent saptığını gösterir: teal tam tutturdun, magenta uzaklaştın.";
+constexpr const char* kTipPiano      = "Tuner'ın kullanabileceği notalar. Teal tuşlar açık; bir tuşa tıklayarak o notayı aç ya da kapa.";
+
+// Parça 4A: nota göstergesi + seviye metreleri
+constexpr float kPitchMaxCents = 50.f;   // ibre/renk bu sapmada uca varır
+constexpr float kPitchSweep    = 2.4f;   // ibrenin 12 yönünden her yana maksimum açısı (rad)
+constexpr float kMeterFloorDb  = -60.f;  // metre tabanı
+constexpr float kMeterFallDb   = 1.5f;   // metre düşüşü, 30 Hz karede dB
+
+// Parça 3B
+constexpr const char* kRangeNames[7] = { "bass", "baritone", "tenor", "alto", "mezzo soprano", "soprano", "generic" };   // "range" parametresi sırası
+constexpr const char* kHz          = "hz";
+constexpr float       kPhotoFrame  = 3.f;      // dikey fotoğraf çerçevesi kalınlığı/iç boşluğu (tasarım px)
+constexpr const char* kNoDetect    = "-";        // key detect: sonuç yok
+
 // ---------------------------------------------------------------- yerleşim (kW x kH uzayında, Paint taslağından)
 using R = juce::Rectangle<float>;
 namespace L {
@@ -80,6 +121,8 @@ inline const R vibSlider   { 930, 400, 135, 36 },  vibValue   { 1078, 398, 70, 4
 inline const R tolLabel    { 870, 458, 200, 24 };
 inline const R centsLabel  { 868, 484, 90, 20 },   centsValue { 885, 504, 55, 28 },   centsKnob { 868, 530, 92, 92 };
 inline const R timeLabel   { 985, 484, 90, 20 },   timeValue  { 1003, 504, 55, 28 },  timeKnob  { 988, 530, 92, 92 };
+inline const R formantLabel { 185, 552, 80, 34 },  formantBox  { 268, 552, 182, 34 };   // key detect sonucunun hemen altı
+inline const R rangeChoice { 530, 475, 255, 40 },  rangeInfo   { 530, 522, 255, 36 };   // rangeBox'un içi
 inline const R keyPhoto    { 35, 438, 105, 174 };
 inline const R keyLabel    { 180, 435, 270, 40 },  keyResult  { 185, 505, 270, 40 };
 inline const R rangeLabel  { 515, 428, 285, 34 },  rangeBox   { 515, 465, 285, 105 };
