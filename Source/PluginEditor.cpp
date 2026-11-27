@@ -1,192 +1,126 @@
 #include "PluginEditor.h"
+#include "Theme.h"
 
 using namespace juce;
+namespace L = Theme::L;
 
-// Etiketler tek yerde (UTF-8 kacisli: derleyici kod sayfasindan bagimsiz)
-static const String kLabelIn  = String::fromUTF8 ("Giri\xc5\x9f");
-static const String kLabelOut = String::fromUTF8 ("Siki\xc5\x9f");
-
-static const char* kNames[12] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-static String noteName (int midi) { return String (kNames[((midi % 12) + 12) % 12]) + String (midi / 12 - 1); }
-
-static String listeningText (float progress)
+namespace
 {
-    const int total = roundToInt (mt::kKeySeconds);
-    return "Dinleniyor... " + String (jmin (total, (int) (progress * (float) total))) + " sn / " + String (total) + " sn";
+void text (Graphics& g, const char* s, Rectangle<float> r, float h, Justification j = Justification::centred)
+{
+    g.setColour (Theme::kLight);
+    g.setFont (Theme::font (h));
+    g.drawText (Theme::str (s), r, j);
 }
 
-MadenciEditor::Piano::Piano (MadenciProcessor& p) : proc (p)
+void slot (Graphics& g, Rectangle<float> r, Colour c, bool round = false)
 {
-    for (int i = 0; i < 12; ++i) np[i] = proc.apvts.getParameter ("n" + String (i));
+    g.setColour (c.withAlpha (0.6f));
+    if (round) g.drawEllipse (r, 1.5f); else g.drawRoundedRectangle (r, 6.f, 1.5f);
 }
 
-Rectangle<float> MadenciEditor::Piano::keyRect (int pc) const
+// Görsel yoksa yer tutucu çizer; oran korunur, taşan kısım kırpılır
+void photo (Graphics& g, const Image& img, Rectangle<float> r)
 {
-    static const int whiteIdx[12] = { 0, -1, 1, -1, 2, 3, -1, 4, -1, 5, -1, 6 };
-    const float ww = (float) getWidth() / 7.f, bw = ww * 0.6f, bh = (float) getHeight() * 0.6f;
-    if (whiteIdx[pc] >= 0) return { whiteIdx[pc] * ww, 0.f, ww, (float) getHeight() };
-    return { whiteIdx[pc - 1] * ww + ww - bw / 2.f, 0.f, bw, bh };   // siyah: solundaki beyaz tusun sagi
+    if (img.isNull()) { slot (g, r, Theme::kMagenta); return; }
+    g.saveState();
+    g.reduceClipRegion (r.getSmallestIntegerContainer());
+    g.drawImage (img, r, RectanglePlacement::fillDestination);
+    g.restoreState();
+}
 }
 
-void MadenciEditor::Piano::paint (Graphics& g)
+MadenciEditor::MadenciEditor (MadenciProcessor& p) : AudioProcessorEditor (&p), proc (p)
 {
-    static const int whites[7] = { 0, 2, 4, 5, 7, 9, 11 }, blacks[5] = { 1, 3, 6, 8, 10 };
-    auto draw = [&] (int pc, bool black)
-    {
-        const auto r = keyRect (pc);
-        const bool on = np[pc]->getValue() > 0.5f;
-        g.setColour (pc == target ? Colours::orange : on ? (black ? Colour (0xff2e7d32) : Colour (0xff81c784))
-                                                         : (black ? Colours::black : Colours::white));
-        g.fillRect (r);
-        g.setColour (Colours::grey); g.drawRect (r);
-        g.setColour (on || black ? Colours::white : Colours::black);
-        g.drawText (kNames[pc], r.withTrimmedTop (r.getHeight() - 22.f), Justification::centred);
-    };
-    for (int pc : whites) draw (pc, false);
-    for (int pc : blacks) draw (pc, true);
-}
+    pickaxe   = Theme::image (Theme::kPickaxeRes);
+    minerWide = Theme::image (Theme::kMinerWideRes);
+    minerTall = Theme::image (Theme::kMinerTallRes);
 
-void MadenciEditor::Piano::mouseDown (const MouseEvent& e)
-{
-    static const int order[12] = { 1, 3, 6, 8, 10, 0, 2, 4, 5, 7, 9, 11 };   // siyahlar once
-    for (int pc : order)
-        if (keyRect (pc).contains (e.position))
-        {
-            auto* p = np[pc];
-            p->beginChangeGesture();
-            p->setValueNotifyingHost (p->getValue() > 0.5f ? 0.f : 1.f);
-            p->endChangeGesture();
-            repaint();
-            return;
-        }
-}
-
-void MadenciEditor::addKnob (Knob& k, const char* id, const char* text)
-{
-    k.l.setText (text, dontSendNotification);
-    k.l.setJustificationType (Justification::centred);
-    k.s.setTextBoxStyle (Slider::TextBoxBelow, false, 90, 18);
-    addAndMakeVisible (k.s); addAndMakeVisible (k.l);
-    k.a = std::make_unique<SA> (proc.apvts, id, k.s);
-}
-
-void MadenciEditor::addCombo (ComboBox& c, std::unique_ptr<CA>& att, const char* id)
-{
-    auto* p = dynamic_cast<AudioParameterChoice*> (proc.apvts.getParameter (id));
-    c.addItemList (p->choices, 1);
-    addAndMakeVisible (c);
-    att = std::make_unique<CA> (proc.apvts, id, c);
-}
-
-void MadenciEditor::setChoice (const char* id, int index)
-{
-    if (auto* p = dynamic_cast<AudioParameterChoice*> (proc.apvts.getParameter (id)))
-    {
-        p->beginChangeGesture(); *p = index; p->endChangeGesture();
-    }
-}
-
-MadenciEditor::MadenciEditor (MadenciProcessor& p) : AudioProcessorEditor (&p), proc (p), piano (p)
-{
-    setSize (1000, 440);   // Key Detect etiketi ("A# minor (alternatif: C# major)") icin genis
-    addAndMakeVisible (detectBtn);
-    detectBtn.onClick = [this] { proc.engine.keyRequest.store (true); keyLabel.setText (listeningText (0.f), dontSendNotification); };
-    addAndMakeVisible (keyLabel); addAndMakeVisible (noteLabel);
-    keyLabel.setColour (Label::textColourId, Colours::white);
-    noteLabel.setColour (Label::textColourId, Colours::white);
-    noteLabel.setFont (Font (FontOptions (18.f)));
-
-    addCombo (keyBox, keyAtt, "key"); addCombo (scaleBox, scaleAtt, "scale"); addCombo (rangeBox, rangeAtt, "range");
-    addCombo (formantBox, formantAtt, "formant");
-    formantLabel.setText ("Formant", dontSendNotification); addAndMakeVisible (formantLabel);
-    formantLabel.setColour (Label::textColourId, Colours::white);
-    addAndMakeVisible (vibBtn);
-    vibAtt = std::make_unique<BA> (proc.apvts, "vibOn", vibBtn);
-
-    addKnob (kRef, "ref", "Reference Hz");   addKnob (kSpeed, "speed", "Speed");
-    addKnob (kGlide, "glide", "Note Transition"); addKnob (kVib, "vibAmt", "Vibrato %");
-    addKnob (kTolC, "tolC", "Tolerance Cents"); addKnob (kTolT, "tolT", "Tolerance Time");
-    addAndMakeVisible (piano);
-    startTimerHz (30);
-}
-
-void MadenciEditor::resized()
-{
-    auto r = getLocalBounds().reduced (12);
-    auto top = r.removeFromTop (28);
-    detectBtn.setBounds (top.removeFromLeft (100)); top.removeFromLeft (6);
-    keyLabel.setBounds (top.removeFromLeft (250)); top.removeFromLeft (6);
-    keyBox.setBounds (top.removeFromLeft (70)); top.removeFromLeft (6);
-    scaleBox.setBounds (top.removeFromLeft (100)); top.removeFromLeft (6);
-    rangeBox.setBounds (top.removeFromLeft (130)); top.removeFromLeft (10);
-    vibBtn.setBounds (top.removeFromLeft (90));
-
-    r.removeFromTop (10);
-    auto row = r.removeFromTop (130);
-    Knob* ks[6] = { &kRef, &kSpeed, &kGlide, &kVib, &kTolC, &kTolT };
-    const int w = row.getWidth() / 6;
-    for (auto* k : ks) { auto c = row.removeFromLeft (w); k->l.setBounds (c.removeFromTop (20)); k->s.setBounds (c); }
-
-    r.removeFromTop (10);
-    auto mid = r.removeFromTop (130);
-    piano.setBounds (mid.removeFromLeft (490));
-    auto right = mid.reduced (16, 0);
-    auto fm = right.removeFromBottom (28);   // piyano satirinin sag alti: ust kisim Detected/Target yazisi
-    formantLabel.setBounds (fm.removeFromLeft (70)); formantBox.setBounds (fm.removeFromLeft (150));
-    noteLabel.setBounds (right);
-}
-
-static void drawMeter (Graphics& g, Rectangle<int> area, const String& name, float level)
-{
-    g.setColour (Colours::white);
-    g.drawText (name, area.removeFromLeft (60), Justification::centredLeft);
-    g.setColour (Colour (0xff111111)); g.fillRect (area);
-    const float db = Decibels::gainToDecibels (level, -60.f);
-    const float f = jlimit (0.f, 1.f, (db + 60.f) / 60.f);
-    g.setColour (db > -1.f ? Colours::red : Colours::limegreen);
-    g.fillRect (area.withWidth (roundToInt (area.getWidth() * f)));
+    setResizable (true, true);
+    setResizeLimits (Theme::kW / 2, Theme::kH / 2, Theme::kW * 2, Theme::kH * 2);
+    getConstrainer()->setFixedAspectRatio ((double) Theme::kW / Theme::kH);
+    setSize (Theme::kW, Theme::kH);
 }
 
 void MadenciEditor::paint (Graphics& g)
 {
-    g.fillAll (Colour (0xff262626));
-    auto m = getLocalBounds().reduced (12).removeFromBottom (60);
-    drawMeter (g, m.removeFromTop (24), kLabelIn, inLevel);
-    m.removeFromTop (8);
-    drawMeter (g, m.removeFromTop (24), kLabelOut, outLevel);
-}
+    g.addTransform (AffineTransform::scale ((float) getWidth() / (float) Theme::kW));
+    g.fillAll (Theme::kDark);
+    g.setImageResamplingQuality (Theme::kPixelStyle ? Graphics::lowResamplingQuality : Graphics::highResamplingQuality);
 
-void MadenciEditor::timerCallback()
-{
-    inLevel = jmax (proc.inPeak.exchange (0.f), inLevel * 0.85f);
-    outLevel = jmax (proc.outPeak.exchange (0.f), outLevel * 0.85f);
+    // başlık
+    text (g, Theme::kTitle, L::titleText, 24, Justification::centredLeft);
+    photo (g, pickaxe, L::titleIcon);
 
-    const float m = proc.engine.dispMidi.load();
-    const int t = proc.engine.dispTarget.load();
-    piano.target = t >= 0 ? ((t % 12) + 12) % 12 : -1;
-    if (m < 0.f) noteLabel.setText ("Detected: --\nTarget: --", dontSendNotification);
-    else
+    // scale + nota harfleri
+    text (g, Theme::kScale, L::scaleLabel, 40, Justification::centredLeft);
+    slot (g, L::scaleBox, Theme::kMagenta);
+    text (g, Theme::kSampleScale, L::scaleBox.withTrimmedRight (55), 30);
+    for (int i = 0; i < 2; ++i)
     {
-        const int nearest = (int) std::lround (m);
-        const int ref = t >= 0 ? t : nearest;
-        noteLabel.setText ("Detected: " + noteName (nearest) + "  (" + String (roundToInt ((m - (float) ref) * 100.f)) + " c)\nTarget: "
-                           + (t >= 0 ? noteName (t) : String ("--")), dontSendNotification);
+        auto c = L::accBox.withWidth (L::accBox.getWidth() / 2).translated ((float) i * L::accBox.getWidth() / 2, 0.f);
+        slot (g, c, Theme::kMagenta);
+        text (g, i == 0 ? Theme::kSampleFlat : Theme::kSampleSharp, c, 28);
+    }
+    const float cw = L::noteRow.getWidth() / 7.f;
+    for (int i = 0; i < 7; ++i)
+    {
+        auto c = Rectangle<float> (L::noteRow.getX() + (float) i * cw, L::noteRow.getY(), cw, L::noteRow.getHeight());
+        slot (g, c, Theme::kMagenta);
+        text (g, String (Theme::kNoteLetters).substring (i, i + 1).toRawUTF8(), c, 36);
     }
 
-    const int st = proc.engine.keyState.load();
-    if (st == 1)
-        keyLabel.setText (listeningText (proc.engine.keyProgress.load()), dontSendNotification);
-    else if (st == 2)
-    {
-        proc.engine.keyState.store (0);
-        const int r = proc.engine.keyResult.load(), alt = proc.engine.keyAlt.load();
-        if (r < 0) keyLabel.setText (String::fromUTF8 ("Ses alg\xc4\xb1lanamad\xc4\xb1"), dontSendNotification);   // hic sesli nota yok
-        else
-        {
-            keyLabel.setText (String (mt::keyName (r)) + (alt >= 0 ? " (alternatif: " + String (mt::keyName (alt)) + ")" : String()), dontSendNotification);
-            setChoice ("key", r % 12); setChoice ("scale", r >= 12 ? 1 : 0);   // maskeyi timer doldurur
-        }
-    }
-    piano.repaint();
-    repaint();
+    // piyano
+    slot (g, L::piano, Theme::kTeal);
+
+    // giriş / çıkış ölçerleri
+    text (g, Theme::kIn, L::inLabel, 14);   slot (g, L::inMeter, Theme::kTeal);
+    text (g, Theme::kOut, L::outLabel, 14); slot (g, L::outMeter, Theme::kTeal);
+
+    // orta ekran
+    slot (g, L::display, Theme::kTeal);
+    text (g, Theme::kSampleNote, L::display, 110);
+    text (g, Theme::kTitle, L::centerTitle, 30);
+
+    // reference + yatay madenci
+    text (g, Theme::kReference, L::refLabel, 14, Justification::centredRight);
+    slot (g, L::refBox, Theme::kMagenta);
+    text (g, Theme::kSampleRef, L::refBox, 24);
+    photo (g, minerWide, L::minerWide);
+
+    // speed / note transition
+    text (g, Theme::kSpeed, L::speedLabel, 14);
+    slot (g, L::speedValue, Theme::kMagenta);  text (g, Theme::kSampleSpeed, L::speedValue, 24);
+    slot (g, L::speedKnob, Theme::kMagenta, true);
+    text (g, Theme::kTransition, L::transLabel, 14);
+    slot (g, L::transValue, Theme::kMagenta);  text (g, Theme::kSampleTrans, L::transValue, 24);
+    slot (g, L::transKnob, Theme::kMagenta, true);
+
+    // vibrato
+    text (g, Theme::kVibrato, L::vibLabel, 14, Justification::centredLeft);
+    slot (g, L::vibToggle, Theme::kMagenta);   text (g, Theme::kSampleOn, L::vibToggle, 16);
+    slot (g, L::vibSlider, Theme::kMagenta);
+    slot (g, L::vibValue, Theme::kMagenta);    text (g, Theme::kSampleVib, L::vibValue, 24);
+
+    // tolerance
+    text (g, Theme::kTolerance, L::tolLabel, 14);
+    text (g, Theme::kCents, L::centsLabel, 12);
+    slot (g, L::centsValue, Theme::kMagenta);  text (g, Theme::kSampleOff, L::centsValue, 16);
+    slot (g, L::centsKnob, Theme::kMagenta, true);
+    text (g, Theme::kTime, L::timeLabel, 12);
+    slot (g, L::timeValue, Theme::kMagenta);   text (g, Theme::kSampleOff, L::timeValue, 16);
+    slot (g, L::timeKnob, Theme::kMagenta, true);
+
+    // key detect + dikey madenci
+    photo (g, minerTall, L::keyPhoto);
+    text (g, Theme::kKeyDetect, L::keyLabel, 26, Justification::centredLeft);
+    text (g, Theme::kSampleKey, L::keyResult, 22, Justification::centredLeft);
+
+    // range
+    text (g, Theme::kRange, L::rangeLabel, 26);
+    slot (g, L::rangeBox, Theme::kTeal);
+
+    // alt yazılar
+    text (g, Theme::kFootLeft, L::footLeft, 10, Justification::centredLeft);
+    text (g, Theme::kFootMid, L::footMid, 10);
 }
