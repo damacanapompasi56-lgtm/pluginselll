@@ -38,15 +38,21 @@ public:
     void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
     void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
 
-    void fit (juce::Rectangle<float> r, float s) { scale = s; laf.h = 20.f * s; setBounds ((r * s).toNearestInt()); }
+    void fit (juce::Rectangle<float> r, float s) { scale = s; laf.h = r.getHeight() * 0.58f * s; setBounds ((r * s).toNearestInt()); }   // popup yazısı = kutu yüksekliğinin %58'i
 
     void paint (juce::Graphics& g) override
     {
         cell (g, getLocalBounds().toFloat(), {}, false, scale, hover);
         const auto r = getLocalBounds().toFloat().reduced (2.f * scale);
         g.setColour (Theme::kLight);
-        g.setFont (Theme::font (r.getHeight() * 0.5f));
-        g.drawText (labels[index], r.withTrimmedRight (r.getHeight() * 1.1f), juce::Justification::centred);
+        auto f = Theme::font ((float) getHeight() * 0.58f);   // kutu yüksekliğinin %58'i
+        const auto area = r.withTrimmedRight (r.getHeight() * 1.1f).reduced (4.f * scale, 0.f);
+        juce::GlyphArrangement ga;
+        ga.addLineOfText (f, labels[index], 0.f, 0.f);
+        const float tw = ga.getBoundingBox (0, -1, true).getWidth();
+        if (tw > area.getWidth() && tw > 0.f) f = Theme::font (f.getHeight() * area.getWidth() / tw);   // taşmasın
+        g.setFont (f);
+        g.drawText (labels[index], area, juce::Justification::centred);
         const float a = r.getHeight() * 0.28f;
         const juce::Point<float> c (r.getRight() - r.getHeight() * 0.6f, r.getCentreY());
         juce::Path p;

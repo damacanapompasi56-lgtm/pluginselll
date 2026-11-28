@@ -9,6 +9,13 @@
 #include "Tooltips.h"
 #include <vector>
 
+// Formant: tıklayınca doğrudan diğer seçeneğe geçen tek düğme (açılır menü yok); yazı düğme boyuna göre ölçeklenir.
+struct FormantButton : juce::Button
+{
+    FormantButton() : juce::Button ("formant") { setClickingTogglesState (true); }
+    void paintButton (juce::Graphics&, bool over, bool down) override;
+};
+
 // PARÇA 2A/2B/3A/3B/4A/4B/5/6A: kazma knob'ları, vibrato, reference, scale, piyano, key detect, formant, range, nota göstergesi, metreler, CCTV fotoğraf, tooltip'ler, negatif speed (hell) modu.
 class MadenciEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
@@ -28,7 +35,7 @@ private:
     tt::Tip<KazmaKnob> speedKnob, transKnob, centsKnob, timeKnob;
     tt::Tip<vr::VibratoControl> vibrato;
     tt::Tip<vr::RefControl> refCtl;
-    tt::Tip<sc::ChoiceBox> scaleBox, formantBox;
+    tt::Tip<sc::ChoiceBox> scaleBox;
     tt::Tip<sc::KeyPicker> keyPick;
     tt::Tip<sc::Piano> piano;
     tt::Tip<sc::KeyDetectView> keyView;
@@ -47,5 +54,7 @@ private:
     double lastTick = 0.0;
     juce::Point<int> shake;
     juce::Random rnd;
+    FormantButton formantBtn;               // toggle açık = formant 1 (not corrected)
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> formantAtt;   // butondan sonra tanımlı: önce o yok olur
     juce::ParameterAttachment speedAtt;     // en sonda
 };

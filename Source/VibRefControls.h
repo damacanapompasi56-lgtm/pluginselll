@@ -36,7 +36,7 @@ public:
         onTextChange = [this] { commit(); };
     }
 
-    void fit (juce::Rectangle<int> r, float s) { scale = s; setBounds (r); setFont (Theme::font ((float) r.getHeight() * 0.6f)); }
+    void fit (juce::Rectangle<int> r, float s, float fontK = 0.6f) { scale = s; setBounds (r); setFont (Theme::font ((float) r.getHeight() * fontK)); }
 
     void refresh()
     {
@@ -87,7 +87,7 @@ public:
         g.setColour (Theme::kMagenta);
         g.drawRoundedRectangle (r, 8.f * scale, 1.5f * scale);
         g.setColour (on ? Theme::kLight : Theme::kLight.withAlpha (0.5f));
-        g.setFont (Theme::font (r.getHeight() * 0.55f));
+        g.setFont (Theme::font (r.getHeight() * 0.62f));
         g.drawText (Theme::str (on ? Theme::kOn : Theme::kOff), r, juce::Justification::centred);
     }
 };
@@ -140,7 +140,7 @@ public:
         toggle.scale = slider.scale = s;
         toggle.setBounds (ts.translated (-o.x, -o.y).toNearestInt());
         slider.setBounds (ss.translated (-o.x, -o.y).toNearestInt());
-        box.fit (vs.translated (-o.x, -o.y).toNearestInt(), s);
+        box.fit (vs.translated (-o.x, -o.y).toNearestInt(), s, 0.65f);
     }
 
 private:

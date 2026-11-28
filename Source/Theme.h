@@ -122,7 +122,7 @@ using R = juce::Rectangle<float>;
 namespace L {
 inline const R titleText   { 15, 8, 190, 34 },     titleIcon  { 205, 8, 34, 34 };
 inline const R scaleLabel  { 50, 66, 300, 56 };
-inline const R scaleBox    { 50, 125, 215, 50 },   accBox     { 298, 128, 105, 48 };
+inline const R scaleBox    { 50, 125, 230, 50 },   accBox     { 298, 128, 105, 48 };
 inline const R noteRow     { 62, 198, 285, 55 };
 inline const R piano       { 20, 265, 750, 135 };
 inline const R inLabel     { 455, 40, 40, 22 },    inMeter    { 468, 70, 14, 150 };
@@ -130,15 +130,16 @@ inline const R outLabel    { 785, 40, 60, 22 },    outMeter   { 808, 70, 14, 150
 inline const R display     { 495, 40, 270, 150 },  centerTitle { 495, 205, 270, 36 };
 inline const R refLabel    { 940, 6, 90, 24 },    refBox     { 1035, 5, 100, 40 };
 inline const R minerWide   { 870, 50, 265, 150 };
-inline const R speedLabel  { 800, 222, 115, 24 },  speedValue { 800, 252, 115, 38 },  speedKnob { 805, 292, 105, 98 };
-inline const R transLabel  { 960, 222, 125, 24 },  transValue { 960, 252, 125, 38 },  transKnob { 975, 292, 105, 98 };
-inline const R vibLabel    { 800, 402, 85, 24 },   vibToggle  { 888, 405, 40, 30 };
-inline const R vibSlider   { 930, 400, 135, 36 },  vibValue   { 1078, 398, 70, 42 };
-inline const R tolLabel    { 870, 458, 200, 24 };
-inline const R centsLabel  { 868, 484, 90, 20 },   centsValue { 885, 504, 55, 28 },   centsKnob { 868, 530, 92, 92 };
-inline const R timeLabel   { 985, 484, 90, 20 },   timeValue  { 1003, 504, 55, 28 },  timeKnob  { 988, 530, 92, 92 };
-inline const R formantLabel { 185, 552, 80, 34 },  formantBox  { 268, 552, 182, 34 };   // key detect sonucunun hemen altı
-inline const R rangeChoice { 530, 475, 255, 40 },  rangeInfo   { 530, 522, 255, 36 };   // rangeBox'un içi
+inline const R speedLabel  { 800, 222, 115, 26 },  speedValue { 800, 250, 115, 40 },  speedKnob { 805, 292, 105, 98 };
+inline const R transLabel  { 960, 222, 125, 26 },  transValue { 960, 250, 125, 40 },  transKnob { 975, 292, 105, 98 };
+// zangır zangır: etiket üstte, altında tek satır (on/off, kaydırıcı, değer); büyük yazı yan yana sığmadı
+inline const R vibLabel    { 800, 394, 200, 26 },  vibToggle  { 800, 424, 62, 38 };
+inline const R vibSlider   { 870, 422, 188, 42 },  vibValue   { 1066, 422, 82, 42 };
+inline const R tolLabel    { 870, 466, 200, 26 };
+inline const R centsLabel  { 868, 492, 100, 22 },  centsValue { 882, 514, 64, 34 },   centsKnob { 868, 550, 92, 92 };
+inline const R timeLabel   { 984, 492, 100, 22 },  timeValue  { 1002, 514, 64, 34 },  timeKnob  { 988, 550, 92, 92 };
+inline const R formantLabel { 170, 548, 98, 40 },  formantBox  { 272, 548, 178, 40 };   // key detect sonucunun hemen altı
+inline const R rangeChoice { 530, 472, 255, 46 },  rangeInfo   { 530, 524, 255, 36 };   // rangeBox'un içi
 inline const R keyPhoto    { 35, 438, 105, 174 };
 inline const R keyLabel    { 180, 435, 270, 40 },  keyResult  { 185, 505, 270, 40 };
 inline const R rangeLabel  { 515, 428, 285, 34 },  rangeBox   { 515, 465, 285, 105 };

@@ -42,7 +42,7 @@ public:
         valueRect = v.translated (-o.x, -o.y);
         knobRect  = k.translated (-o.x, -o.y);
         valueBox.setBounds (valueRect.toNearestInt());
-        valueBox.setFont (Theme::font (valueRect.getHeight() * 0.6f));
+        valueBox.setFont (Theme::font (valueRect.getHeight() * 0.65f));
         slider.setBounds (knobRect.toNearestInt());
     }
 

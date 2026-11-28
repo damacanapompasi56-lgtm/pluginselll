@@ -13,6 +13,20 @@ void text (Graphics& g, const char* s, Rectangle<float> r, float h, Justificatio
     g.drawText (Theme::str (s), r, j);
 }
 
+// Yazıyı kutuya sığdırır: yükseklik h (kutu yüksekliğini aşmaz), genişlik yetmezse orantılı küçülür
+void fitText (Graphics& g, const char* s, Rectangle<float> r, float h, Justification j = Justification::centred)
+{
+    const auto str = Theme::str (s);
+    h = jmin (h, r.getHeight());
+    GlyphArrangement ga;
+    ga.addLineOfText (Theme::font (h), str, 0.f, 0.f);
+    const float w = ga.getBoundingBox (0, -1, true).getWidth();
+    if (w > r.getWidth() && w > 0.f) h *= r.getWidth() / w;
+    g.setColour (Theme::kLight);
+    g.setFont (Theme::font (h));
+    g.drawText (str, r, j);
+}
+
 void slot (Graphics& g, Rectangle<float> r, Colour c, bool round = false)
 {
     g.setColour (c.withAlpha (0.6f));
@@ -30,12 +44,23 @@ void photo (Graphics& g, const Image& img, Rectangle<float> r)
 }
 }
 
+void FormantButton::paintButton (Graphics& g, bool over, bool down)
+{
+    const auto r = getLocalBounds().toFloat().reduced (1.f);
+    g.setColour (Theme::kDark.brighter (down ? 0.35f : over ? 0.25f : 0.15f));
+    g.fillRoundedRectangle (r, 6.f);
+    g.setColour (Theme::kTeal.withAlpha (0.6f));
+    g.drawRoundedRectangle (r, 6.f, 1.5f);
+    // 0 = corrected, 1 = not corrected (toggle açık = 1)
+    fitText (g, Theme::kFormantOpts[getToggleState() ? 1 : 0], r.reduced (6.f, 2.f), r.getHeight() * 0.55f);
+}
+
 MadenciEditor::MadenciEditor (MadenciProcessor& p)
     : AudioProcessorEditor (&p), proc (p),
       speedKnob (Theme::kTipSpeed, p.apvts, "speed", 1, false), transKnob (Theme::kTipTransition, p.apvts, "glide", 1, false),
       centsKnob (Theme::kTipCents, p.apvts, "tolC", 0, true),   timeKnob  (Theme::kTipTime, p.apvts, "tolT", 0, true),
       vibrato (Theme::kTipVibrato, p.apvts), refCtl (Theme::kTipRef, p.apvts),
-      scaleBox (Theme::kTipScale, p.apvts, "scale", Theme::kScaleNames, 3), formantBox (Theme::kTipFormant, p.apvts, "formant", Theme::kFormantOpts, 2),
+      scaleBox (Theme::kTipScale, p.apvts, "scale", Theme::kScaleNames, 3),
       keyPick (Theme::kTipScale, p.apvts), piano (Theme::kTipPiano, p.apvts), keyView (Theme::kTipKeyDetect, p.engine), rangeCtl (Theme::kTipRange, p.apvts),
       pitchDisp (Theme::kTipDisplay, p.engine), inMeter (Theme::kTipIn, p.inPeak), outMeter (Theme::kTipOut, p.outPeak),
       speedAtt (*p.apvts.getParameter ("speed"), [this] (float v) { onSpeed (v); })
@@ -44,8 +69,12 @@ MadenciEditor::MadenciEditor (MadenciProcessor& p)
         addAndMakeVisible (k);
     addAndMakeVisible (vibrato);
     addAndMakeVisible (refCtl);
-    for (auto* c : std::initializer_list<Component*> { &scaleBox, &formantBox, &keyPick, &piano, &keyView, &rangeCtl, &pitchDisp, &inMeter, &outMeter, &cctvView })
+    for (auto* c : std::initializer_list<Component*> { &scaleBox, &keyPick, &piano, &keyView, &rangeCtl, &pitchDisp, &inMeter, &outMeter, &cctvView })
         addAndMakeVisible (c);
+
+    formantBtn.setTooltip (Theme::str (Theme::kTipFormant));
+    addAndMakeVisible (formantBtn);
+    formantAtt = std::make_unique<AudioProcessorValueTreeState::ButtonAttachment> (p.apvts, "formant", formantBtn);   // aynı parametre: choice 0/1
 
     // etiket alanları da tooltip versin (kontrollerin üstüne binmezler)
     const auto zone = [this] (const Theme::R& r, const char* t)
@@ -155,7 +184,7 @@ void MadenciEditor::resized()
     vibrato.place (L::vibToggle, L::vibSlider, L::vibValue, s);
     refCtl.place (L::refBox, s);
     scaleBox.fit (L::scaleBox, s);
-    formantBox.fit (L::formantBox, s);
+    formantBtn.setBounds ((L::formantBox * s).toNearestInt());
     keyPick.place (L::accBox, L::noteRow, s);
     piano.place (L::piano, s);
     keyView.place (L::keyLabel, L::keyResult, s);
@@ -180,7 +209,7 @@ void MadenciEditor::paint (Graphics& g)
 
     // scale etiketi + formant etiketi (kutular, harfler, piyano ayrı bileşenler)
     text (g, Theme::kScale, L::scaleLabel, 40, Justification::centredLeft);
-    text (g, Theme::kFormant, L::formantLabel, 16, Justification::centredLeft);
+    fitText (g, Theme::kFormant, L::formantLabel, 24, Justification::centredLeft);
 
     // giriş / çıkış ölçerleri
     text (g, Theme::kIn, L::inLabel, 14);
@@ -193,16 +222,16 @@ void MadenciEditor::paint (Graphics& g)
     text (g, Theme::kReference, L::refLabel, 14, Justification::centredRight);
 
     // speed / note transition
-    text (g, Theme::kSpeed, L::speedLabel, 14);
-    text (g, Theme::kTransition, L::transLabel, 14);
+    fitText (g, Theme::kSpeed, L::speedLabel, 22);
+    fitText (g, Theme::kTransition, L::transLabel, 22);
 
     // vibrato
-    text (g, Theme::kVibrato, L::vibLabel, 14, Justification::centredLeft);
+    fitText (g, Theme::kVibrato, L::vibLabel, 22, Justification::centredLeft);
 
     // tolerance
-    text (g, Theme::kTolerance, L::tolLabel, 14);
-    text (g, Theme::kCents, L::centsLabel, 12);
-    text (g, Theme::kTime, L::timeLabel, 12);
+    fitText (g, Theme::kTolerance, L::tolLabel, 22);
+    fitText (g, Theme::kCents, L::centsLabel, 20);
+    fitText (g, Theme::kTime, L::timeLabel, 20);
 
     // key detect + dikey madenci
     photo (g, minerTall, L::keyPhoto.reduced (Theme::kPhotoFrame));
