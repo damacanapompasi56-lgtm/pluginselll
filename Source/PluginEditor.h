@@ -32,6 +32,7 @@ private:
     void applyShake();
     MadenciProcessor& proc;
     juce::Image pickaxe, minerTall;
+    juce::Image backdrop;   // taş gren dokusu + vinyet: bir kez üretilir (sabit seed), paletten bağımsız siyah/beyaz saydam katman
     tt::Tip<KazmaKnob> speedKnob, transKnob, centsKnob, timeKnob;
     tt::Tip<vr::VibratoControl> vibrato;
     tt::Tip<vr::RefControl> refCtl;

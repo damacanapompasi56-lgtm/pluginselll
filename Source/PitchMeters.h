@@ -25,6 +25,12 @@ public:
         const bool has = note >= 0;
         const auto col = Theme::kTeal.interpolatedWith (Theme::kMagenta, juce::jlimit (0.f, 1.f, std::abs (dev) / Theme::kPitchMaxCents));
 
+        // ince radyal degrade: göstergenin içi hafif koyu, kenara doğru kaybolur; dış halkada hafif parlama
+        g.setGradientFill (juce::ColourGradient (Theme::kDark.darker (0.5f).withAlpha (0.55f), c.x, c.y, juce::Colours::transparentBlack, c.x + rad, c.y, true));
+        g.fillEllipse (c.x - rad, c.y - rad, rad * 2.f, rad * 2.f);
+        g.setColour (Theme::kTeal.withAlpha (0.07f));
+        g.drawEllipse (c.x - rad, c.y - rad, rad * 2.f, rad * 2.f, 9.f * scale);
+
         g.setColour (Theme::kLight.withAlpha (0.15f));
         g.drawEllipse (c.x - rad, c.y - rad, rad * 2.f, rad * 2.f, 3.f * scale);
         g.setColour (Theme::kLight.withAlpha (0.5f));
@@ -35,15 +41,26 @@ public:
             const float ang = dev / Theme::kPitchMaxCents * Theme::kPitchSweep;
             juce::Path arc;
             arc.addCentredArc (c.x, c.y, rad, rad, 0.f, 0.f, ang, true);
+            g.setColour (col.withAlpha (0.2f));   // parlama
+            g.strokePath (arc, juce::PathStrokeType (14.f * scale, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             g.setColour (col);
             g.strokePath (arc, juce::PathStrokeType (6.f * scale, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             const float d = 8.f * scale;
+            g.setColour (col.withAlpha (0.25f));
+            g.fillEllipse (c.x + std::sin (ang) * rad - d * 1.8f, c.y - std::cos (ang) * rad - d * 1.8f, d * 3.6f, d * 3.6f);
+            g.setColour (col);
             g.fillEllipse (c.x + std::sin (ang) * rad - d, c.y - std::cos (ang) * rad - d, d * 2.f, d * 2.f);
         }
 
         const auto txt = has ? Theme::str (Theme::kKeyNames[note % 12]).toUpperCase() : Theme::str (Theme::kNoDetect);
-        g.setColour (has ? Theme::kLight : Theme::kLight.withAlpha (0.4f));
         g.setFont (Theme::font ((txt.length() > 1 ? 80.f : 100.f) * scale));
+        if (has)   // harfe hafif parlama
+        {
+            g.setColour (col.withAlpha (0.14f));
+            for (const auto o : { juce::Point<float> (-2.f, 0.f), juce::Point<float> (2.f, 0.f), juce::Point<float> (0.f, -2.f), juce::Point<float> (0.f, 2.f) })
+                g.drawText (txt, b.translated (o.x * scale, o.y * scale), juce::Justification::centred);
+        }
+        g.setColour (has ? Theme::kLight : Theme::kLight.withAlpha (0.4f));
         g.drawText (txt, b, juce::Justification::centred);
     }
 
@@ -77,10 +94,17 @@ public:
     {
         const auto r = getLocalBounds().toFloat().reduced (scale);
         const float f = juce::jlimit (0.f, 1.f, (db - Theme::kMeterFloorDb) / -Theme::kMeterFloorDb);
-        g.setColour (db > -3.f ? Theme::kMagenta : Theme::kTeal);
-        g.fillRect (r.withTrimmedTop (r.getHeight() * (1.f - f)).reduced (2.f * scale, 2.f * scale));
-        g.setColour (Theme::kTeal.withAlpha (0.6f));
-        g.drawRect (r, 1.5f * scale);
+        const auto col = db > -3.f ? Theme::kMagenta : Theme::kTeal;
+        Theme::fx::panel (g, r, 2.f * scale, Theme::kDark.darker (0.5f), scale);   // koyu "kuyu"
+        const auto bar = r.withTrimmedTop (r.getHeight() * (1.f - f)).reduced (2.f * scale, 2.f * scale);
+        if (bar.getHeight() > 1.f)
+        {
+            g.setColour (col.withAlpha (0.18f));   // parlama
+            g.fillRect (bar.expanded (1.5f * scale));
+            g.setGradientFill (juce::ColourGradient (col.brighter (0.25f), 0.f, bar.getY(), col.darker (0.25f), 0.f, bar.getBottom(), false));
+            g.fillRect (bar);
+        }
+        Theme::fx::glowStroke (g, r, 0.f, Theme::kTeal.withAlpha (0.6f), 1.5f * scale, scale);
     }
 
 private:

@@ -53,10 +53,8 @@ public:
     void paint (juce::Graphics& g) override
     {
         // değer kutusu çerçevesi
-        g.setColour (Theme::kDark.darker (0.3f));
-        g.fillRoundedRectangle (valueRect, 8.f * scale);
-        g.setColour (Theme::kMagenta);
-        g.drawRoundedRectangle (valueRect.reduced (scale), 8.f * scale, 1.5f * scale);
+        Theme::fx::panel (g, valueRect, 8.f * scale, Theme::kDark.darker (0.3f), scale);
+        Theme::fx::glowStroke (g, valueRect.reduced (scale), 8.f * scale, Theme::kMagenta, 1.5f * scale, scale);
 
         const auto c = knobRect.getCentre();
         const float r = juce::jmin (knobRect.getWidth(), knobRect.getHeight()) * 0.5f - scale;
@@ -71,8 +69,13 @@ public:
             g.drawLine (juce::Line<float> (at (a, r), at (a, r * (major ? 0.82f : 0.88f))), (major ? 1.6f : 1.f) * scale);
         }
 
-        // halka
+        // halka: içte hafif koyu "kuyu" (kazmanın altında) + parlama
         const bool hot = slider.isMouseOverOrDragging();
+        const float ringR = r * 0.78f;
+        g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.35f), c.x, c.y, juce::Colours::transparentBlack, c.x + ringR, c.y, true));
+        g.fillEllipse (juce::Rectangle<float> (ringR * 2.f, ringR * 2.f).withCentre (c));
+        g.setColour (Theme::kMagenta.withAlpha (hot ? 0.16f : 0.09f));
+        g.drawEllipse (juce::Rectangle<float> (r * 1.56f, r * 1.56f).withCentre (c), (hot ? 6.f : 4.5f) * scale);
         g.setColour (hot ? Theme::kMagenta.brighter (0.4f) : Theme::kMagenta);
         g.drawEllipse (juce::Rectangle<float> (r * 1.56f, r * 1.56f).withCentre (c), (hot ? 2.5f : 1.5f) * scale);
 

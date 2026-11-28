@@ -49,10 +49,8 @@ public:
         if (framed)
         {
             const auto r = getLocalBounds().toFloat();
-            g.setColour (Theme::kDark.darker (0.3f));
-            g.fillRoundedRectangle (r, 8.f * scale);
-            g.setColour (Theme::kMagenta);
-            g.drawRoundedRectangle (r.reduced (scale), 8.f * scale, 1.5f * scale);
+            Theme::fx::panel (g, r, 8.f * scale, Theme::kDark.darker (0.3f), scale);
+            Theme::fx::glowStroke (g, r.reduced (scale), 8.f * scale, Theme::kMagenta, 1.5f * scale, scale);
         }
         Label::paint (g);
     }
@@ -82,10 +80,10 @@ public:
     {
         const auto r = getLocalBounds().toFloat().reduced (scale);
         const bool on = getToggleState();
+        Theme::fx::panel (g, r, 8.f * scale, Theme::kDark.darker (0.25f), scale);
         if (on) { g.setColour (Theme::kMagenta.withAlpha (0.35f)); g.fillRoundedRectangle (r, 8.f * scale); }
         if (over || down) { g.setColour (Theme::kMagenta.withAlpha (Theme::kHoverAlpha * (down ? 2.f : 1.f))); g.fillRoundedRectangle (r, 8.f * scale); }
-        g.setColour (Theme::kMagenta);
-        g.drawRoundedRectangle (r, 8.f * scale, 1.5f * scale);
+        Theme::fx::glowStroke (g, r, 8.f * scale, Theme::kMagenta, 1.5f * scale, scale);
         g.setColour (on ? Theme::kLight : Theme::kLight.withAlpha (0.5f));
         g.setFont (Theme::font (r.getHeight() * 0.62f));
         g.drawText (Theme::str (on ? Theme::kOn : Theme::kOff), r, juce::Justification::centred);
@@ -174,10 +172,8 @@ public:
     void paint (juce::Graphics& g) override
     {
         const auto r = getLocalBounds().toFloat();
-        g.setColour (Theme::kDark.darker (0.3f));
-        g.fillRoundedRectangle (r, 8.f * scale);
-        g.setColour (Theme::kMagenta);
-        g.drawRoundedRectangle (r.reduced (scale), 8.f * scale, 1.5f * scale);
+        Theme::fx::panel (g, r, 8.f * scale, Theme::kDark.darker (0.3f), scale);
+        Theme::fx::glowStroke (g, r.reduced (scale), 8.f * scale, Theme::kMagenta, 1.5f * scale, scale);
         if (hov != 0)
         {
             g.setColour (Theme::kMagenta.withAlpha (Theme::kHoverAlpha));

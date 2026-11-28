@@ -50,6 +50,7 @@ public:
     bool ready() const { return N > 0; }
     int latency() const { return L; }
     void set(const EngineParams& p) { P = p; }
+    bool shelfOn = true;   // sabit +0.5 dB / 10 kHz tiz raf; her zaman açık. Yalnız SelfTest bypass testi kapatır (kullanıcıya açık değil)
 
     void prepare(double sampleRate)
     {
@@ -75,6 +76,7 @@ public:
         haveTarget = hadGoal = false; glideLeft = glideTot = 0; corr = corr1 = 0.f; goal0 = 0.f; rhoPrev = 1.f; outsideMs = 0.f; vibCount = 0;
         runActive = false; markCount = 0; kPtr = 0; sNext = 0.0; lastPos = 0.0; vmix = 0.f;
         midiF = 0.f; key.prepare(sr);
+        shelfInit();
     }
 
     float process(float x)
@@ -102,7 +104,7 @@ public:
         if (vmix < 1e-6f) vmix = 0.f; else if (vmix > 0.999999f) vmix = 1.f;   // denormal / tam bypass
         const float m = vmix * std::fmin(w * 8.f, 1.f);   // tane örtüşmesi yoksa (w~0) kuruya düş: delik yok
         acc[i] = 0.f; accW[i] = 0.f;
-        return dry + m * (wet - dry);
+        return shelf(dry + m * (wet - dry));
     }
 
 private:
@@ -149,6 +151,30 @@ private:
     bool runActive = false;
     double sNext = 0.0, lastPos = 0.0;
     float vmix = 0.f;
+
+    // Nihai çıkışa sabit yüksek raf: RBJ biquad, +0.5 dB, 10 kHz, slope 1. Transposed direct form II; her Engine (= kanal) kendi durumunu taşır.
+    float sb0 = 1.f, sb1 = 0.f, sb2 = 0.f, sa1 = 0.f, sa2 = 0.f, sz1 = 0.f, sz2 = 0.f;
+
+    void shelfInit()
+    {
+        const double A = std::pow(10.0, 0.5 / 40.0), f0 = std::min(10000.0, 0.45 * sr);   // f0 < Nyquist (düşük sr koruması)
+        const double w0 = 2.0 * (double) kPi * f0 / sr, cw = std::cos(w0), al = std::sin(w0) * 0.5 * std::sqrt(2.0), tsa = 2.0 * std::sqrt(A) * al;
+        const double b0 = A * ((A + 1) + (A - 1) * cw + tsa), b1 = -2.0 * A * ((A - 1) + (A + 1) * cw), b2 = A * ((A + 1) + (A - 1) * cw - tsa);
+        const double a0 = (A + 1) - (A - 1) * cw + tsa, a1 = 2.0 * ((A - 1) - (A + 1) * cw), a2 = (A + 1) - (A - 1) * cw - tsa;
+        sb0 = (float) (b0 / a0); sb1 = (float) (b1 / a0); sb2 = (float) (b2 / a0); sa1 = (float) (a1 / a0); sa2 = (float) (a2 / a0);
+        sz1 = sz2 = 0.f;
+    }
+
+    float shelf(float x)
+    {
+        if (!shelfOn) return x;
+        const float y = sb0 * x + sz1;
+        sz1 = sb1 * x - sa1 * y + sz2;
+        sz2 = sb2 * x - sa2 * y;
+        if (std::fabs(sz1) < 1e-20f) sz1 = 0.f;   // denormal koruması
+        if (std::fabs(sz2) < 1e-20f) sz2 = 0.f;
+        return y;
+    }
 
     KeyDetector key;
 

@@ -28,8 +28,9 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        g.setColour (Theme::kTeal.withAlpha (0.6f));
-        g.drawRect (getLocalBounds().toFloat().reduced (scale), 1.5f * scale);
+        const auto box = getLocalBounds().toFloat().reduced (scale);
+        Theme::fx::panel (g, box, 0.f, juce::Colours::transparentBlack, scale, 0.8f);   // iç gölge + üst kenar ışığı
+        Theme::fx::glowStroke (g, box, 0.f, Theme::kTeal.withAlpha (0.6f), 1.5f * scale, scale);
         const auto& r = mt::kRanges[index];
         g.setColour (Theme::kLight);
         g.setFont (Theme::font (info.getHeight() * 0.6f));

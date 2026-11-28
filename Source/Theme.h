@@ -168,4 +168,37 @@ inline juce::Image image (const char* res)
     return d != nullptr ? juce::ImageCache::getFromMemory (d, n) : juce::Image();
 }
 
+// ---------------------------------------------------------------- görsel efektler (yalnız çizim; renkler canlı paletten: kLight/kMagenta/kTeal)
+namespace fx {
+// Dolgu + iç gölge (üstün altı koyu, taban hafif koyu) + ince üst kenar parlaması. depth: gölge/parlama çarpanı (seçili turkuaz dolguda düşük tut)
+inline void panel (juce::Graphics& g, juce::Rectangle<float> r, float corner, juce::Colour fill, float s, float depth = 1.f)
+{
+    g.setColour (fill);
+    g.fillRoundedRectangle (r, corner);
+    if (r.getHeight() < 4.f) return;
+    const float h = r.getHeight();
+    g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.30f * depth), 0.f, r.getY(),
+                                             juce::Colours::transparentBlack, 0.f, r.getY() + h * 0.4f, false));
+    g.fillRoundedRectangle (r, corner);
+    g.setGradientFill (juce::ColourGradient (juce::Colours::transparentBlack, 0.f, r.getBottom() - h * 0.35f,
+                                             juce::Colours::black.withAlpha (0.20f * depth), 0.f, r.getBottom(), false));
+    g.fillRoundedRectangle (r, corner);
+    const float y = r.getY() + 1.5f * s, x0 = r.getX() + corner, x1 = r.getRight() - corner;
+    if (x1 > x0) { g.setColour (kLight.withAlpha (0.16f * depth)); g.drawLine (x0, y, x1, y, juce::jmax (1.f, s)); }
+}
+
+// Çerçeve + hafif parlama: üç geniş, çok saydam çizgi alta, net çizgi üste (bileşen sınırı dışı kırpılır, iç taraf görünür)
+inline void glowStroke (juce::Graphics& g, juce::Rectangle<float> r, float corner, juce::Colour c, float thick, float s)
+{
+    const float a[3] = { 0.14f, 0.09f, 0.05f };
+    for (int i = 0; i < 3; ++i)
+    {
+        g.setColour (c.withMultipliedAlpha (a[i]));
+        g.drawRoundedRectangle (r, corner, thick + (float) (i + 1) * 2.5f * s);
+    }
+    g.setColour (c);
+    g.drawRoundedRectangle (r, corner, thick);
+}
+} // namespace fx
+
 } // namespace Theme

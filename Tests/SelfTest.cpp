@@ -62,9 +62,9 @@ static const std::vector<Seg> kPhrase = { { 0.25, 0, 0, 0, 0, 0 }, { 1.4, 1, 215
 static const std::vector<Seg> kOnPitch = { { 0.25, 0, 0, 0, 0, 0 }, { 1.2, 1, 220, 220, 20, 0 }, { 0.12, 2, 0, 0, 0, 0 },
                                            { 1.2, 1, 220, 220, 30, 1 }, { 0.3, 0, 0, 0, 0, 0 } };
 
-static std::vector<float> run(const EngineParams& p, double sr, const std::vector<float>& x)
+static std::vector<float> run(const EngineParams& p, double sr, const std::vector<float>& x, bool shelf = true)
 {
-    Engine e; e.prepare(sr); e.set(p);
+    Engine e; e.prepare(sr); e.set(p); e.shelfOn = shelf;   // shelf=false: yalnız bypass (birebir kopya) testi için
     std::vector<float> y(x.size());
     for (size_t i = 0; i < x.size(); ++i) y[i] = e.process(x[i]);
     return y;
@@ -393,7 +393,7 @@ int main(int argc, char** argv)
         // 2) bypass: düzeltme oranı 1.0 (Tolerance 50 cent = hep tolerans içinde) -> gecikmeli girişle fark < -80 dB
         {
             EngineParams p; p.mask = 0xFFF; p.speed = 0.f; p.tolCents = 50.f;
-            const std::vector<float> xb = vocal(sr, kOnPitch), y = run(p, sr, xb);
+            const std::vector<float> xb = vocal(sr, kOnPitch), y = run(p, sr, xb, false);
             double e = 0, d = 0;
             for (size_t i = (size_t) lat; i < xb.size(); ++i) { const double r = (double) y[i] - xb[i - (size_t) lat]; e += r * r; d += (double) xb[i - (size_t) lat] * xb[i - (size_t) lat]; }
             const double db = 10 * std::log10(e / d + 1e-30);

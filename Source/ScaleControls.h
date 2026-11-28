@@ -13,11 +13,9 @@ using APVTS = juce::AudioProcessorValueTreeState;
 inline void cell (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& t, bool sel, float s, bool hover = false)
 {
     r = r.reduced (2.f * s);
-    g.setColour (sel ? Theme::kTeal : Theme::kDark.darker (0.3f));
-    g.fillRoundedRectangle (r, 8.f * s);
+    Theme::fx::panel (g, r, 8.f * s, sel ? Theme::kTeal : Theme::kDark.darker (0.3f), s, sel ? 0.5f : 1.f);
     if (hover) { g.setColour ((sel ? Theme::kLight : Theme::kMagenta).withAlpha (Theme::kHoverAlpha)); g.fillRoundedRectangle (r, 8.f * s); }
-    g.setColour (sel ? Theme::kTeal : Theme::kMagenta);
-    g.drawRoundedRectangle (r, 8.f * s, 1.5f * s);
+    Theme::fx::glowStroke (g, r, 8.f * s, sel ? Theme::kTeal : Theme::kMagenta, 1.5f * s, s);
     g.setColour (sel ? Theme::kDark : Theme::kLight);
     g.setFont (Theme::font (r.getHeight() * 0.6f));
     g.drawText (t, r, juce::Justification::centred);
@@ -188,8 +186,11 @@ public:
         for (int w = 0; w < kWhites; ++w)
         {
             const auto k = white (w);
-            g.setColour ((on[kWhitePc[w % 7]] ? Theme::kTeal : Theme::kLight).interpolatedWith (Theme::kLight, hov == w ? 0.3f : 0.f));
+            const auto base = (on[kWhitePc[w % 7]] ? Theme::kTeal : Theme::kLight).interpolatedWith (Theme::kLight, hov == w ? 0.3f : 0.f);
+            g.setGradientFill (juce::ColourGradient (base.brighter (0.15f), 0.f, k.getY(), base.darker (0.2f), 0.f, k.getBottom(), false));
             g.fillRect (k);
+            g.setColour (base.brighter (0.5f).withAlpha (0.6f));   // ince üst kenar ışığı
+            g.drawLine (k.getX() + 2.f * scale, k.getY() + 2.f * scale, k.getRight() - 2.f * scale, k.getY() + 2.f * scale, scale);
             g.setColour (Theme::kDark);
             g.drawRect (k, 1.5f * scale);
         }
@@ -197,8 +198,11 @@ public:
         {
             if (! hasBlack (w)) continue;
             const auto k = black (w);
-            g.setColour ((on[kWhitePc[w % 7] + 1] ? Theme::kTeal.darker (0.4f) : Theme::kDark.darker (0.6f)).interpolatedWith (Theme::kLight, hov == 100 + w ? 0.3f : 0.f));
+            const auto base = (on[kWhitePc[w % 7] + 1] ? Theme::kTeal.darker (0.4f) : Theme::kDark.darker (0.6f)).interpolatedWith (Theme::kLight, hov == 100 + w ? 0.3f : 0.f);
+            g.setGradientFill (juce::ColourGradient (base.brighter (0.3f), 0.f, k.getY(), base.darker (0.2f), 0.f, k.getBottom(), false));
             g.fillRect (k);
+            g.setColour (Theme::kLight.withAlpha (0.18f));   // ince üst kenar ışığı
+            g.drawLine (k.getX() + 2.f * scale, k.getY() + 2.f * scale, k.getRight() - 2.f * scale, k.getY() + 2.f * scale, scale);
             g.setColour (Theme::kDark);
             g.drawRect (k, 1.5f * scale);
         }

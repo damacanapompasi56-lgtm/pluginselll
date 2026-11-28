@@ -27,6 +27,42 @@ void fitText (Graphics& g, const char* s, Rectangle<float> r, float h, Justifica
     g.drawText (str, r, j);
 }
 
+// Taş/gren dokusu + vinyet tek seferde: siyah/beyaz çok saydam noktalar, köşelere doğru koyulaşma. Sabit seed; palet değişse de geçerli (zemin rengi canlı çizilir)
+Image makeBackdrop()
+{
+    const int W = Theme::kW, H = Theme::kH;
+    Image img (Image::ARGB, W, H, true);
+    Random rnd (0x5EED1234);
+    Image::BitmapData bd (img, Image::BitmapData::writeOnly);
+    const float cx = (float) W * 0.5f, cy = (float) H * 0.5f, maxD = std::sqrt (cx * cx + cy * cy);
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x)
+        {
+            const float dx = (float) x - cx, dy = (float) y - cy;
+            const float t = jmax (0.f, std::sqrt (dx * dx + dy * dy) / maxD - 0.5f) * 2.f;   // 0 orta .. 1 köşe
+            Colour px = Colours::black.withAlpha (t * t * 0.4f);
+            const float n = rnd.nextFloat();
+            if (n < 0.10f)      px = px.overlaidWith (Colours::white.withAlpha (0.02f + 0.035f * rnd.nextFloat()));
+            else if (n < 0.28f) px = px.overlaidWith (Colours::black.withAlpha (0.035f + 0.05f * rnd.nextFloat()));
+            bd.setPixelColour (x, y, px);
+        }
+    return img;
+}
+
+// Başlık: hafif gölge + çok hafif mor parlama, sonra net yazı
+void heading (Graphics& g, const char* s, Rectangle<float> r, float h, Justification j = Justification::centred)
+{
+    const auto str = Theme::str (s);
+    g.setFont (Theme::font (h));
+    g.setColour (Colours::black.withAlpha (0.45f));
+    g.drawText (str, r.translated (1.5f, 2.f), j);
+    g.setColour (Theme::kMagenta.withAlpha (0.18f));
+    for (const auto o : { Point<float> (-1.f, 0.f), Point<float> (1.f, 0.f), Point<float> (0.f, -1.f), Point<float> (0.f, 1.f) })
+        g.drawText (str, r.translated (o.x, o.y), j);
+    g.setColour (Theme::kLight);
+    g.drawText (str, r, j);
+}
+
 void slot (Graphics& g, Rectangle<float> r, Colour c, bool round = false)
 {
     g.setColour (c.withAlpha (0.6f));
@@ -47,10 +83,9 @@ void photo (Graphics& g, const Image& img, Rectangle<float> r)
 void FormantButton::paintButton (Graphics& g, bool over, bool down)
 {
     const auto r = getLocalBounds().toFloat().reduced (1.f);
-    g.setColour (Theme::kDark.brighter (down ? 0.35f : over ? 0.25f : 0.15f));
-    g.fillRoundedRectangle (r, 6.f);
-    g.setColour (Theme::kTeal.withAlpha (0.6f));
-    g.drawRoundedRectangle (r, 6.f, 1.5f);
+    const float s = (float) getHeight() / 40.f;
+    Theme::fx::panel (g, r, 6.f, Theme::kDark.brighter (down ? 0.35f : over ? 0.25f : 0.15f), s);
+    Theme::fx::glowStroke (g, r, 6.f, Theme::kTeal.withAlpha (0.6f), 1.5f, s);
     // 0 = corrected, 1 = not corrected (toggle açık = 1)
     fitText (g, Theme::kFormantOpts[getToggleState() ? 1 : 0], r.reduced (6.f, 2.f), r.getHeight() * 0.55f);
 }
@@ -93,6 +128,7 @@ MadenciEditor::MadenciEditor (MadenciProcessor& p)
 
     pickaxe   = Theme::image (Theme::kPickaxeRes);
     minerTall = Theme::image (Theme::kMinerTallRes);
+    backdrop  = makeBackdrop();   // bir kez; paint() sadece çizer
 
     setResizable (true, true);
     setResizeLimits (Theme::kW / 2, Theme::kH / 2, Theme::kW * 2, Theme::kH * 2);
@@ -202,13 +238,14 @@ void MadenciEditor::paint (Graphics& g)
     g.addTransform (AffineTransform::scale ((float) getWidth() / (float) Theme::kW));
     g.fillAll (Theme::kDark);
     g.setImageResamplingQuality (Theme::kPixelStyle ? Graphics::lowResamplingQuality : Graphics::highResamplingQuality);
+    g.drawImageAt (backdrop, 0, 0);   // önbellekli gren + vinyet (tasarım uzayında, ölçek dönüşümüyle)
 
     // başlık
-    text (g, Theme::kTitle, L::titleText, 24, Justification::centredLeft);
+    heading (g, Theme::kTitle, L::titleText, 24, Justification::centredLeft);
     photo (g, pickaxe, L::titleIcon);
 
     // scale etiketi + formant etiketi (kutular, harfler, piyano ayrı bileşenler)
-    text (g, Theme::kScale, L::scaleLabel, 40, Justification::centredLeft);
+    heading (g, Theme::kScale, L::scaleLabel, 40, Justification::centredLeft);
     fitText (g, Theme::kFormant, L::formantLabel, 24, Justification::centredLeft);
 
     // giriş / çıkış ölçerleri
@@ -216,7 +253,7 @@ void MadenciEditor::paint (Graphics& g)
     text (g, Theme::kOut, L::outLabel, 14);
 
     // orta ekran
-    text (g, Theme::kTitle, L::centerTitle, 30);
+    heading (g, Theme::kTitle, L::centerTitle, 30);
 
     // reference + yatay madenci
     text (g, Theme::kReference, L::refLabel, 14, Justification::centredRight);
@@ -235,11 +272,10 @@ void MadenciEditor::paint (Graphics& g)
 
     // key detect + dikey madenci
     photo (g, minerTall, L::keyPhoto.reduced (Theme::kPhotoFrame));
-    g.setColour (Theme::kMagenta);
-    g.drawRoundedRectangle (L::keyPhoto.reduced (Theme::kPhotoFrame * 0.5f), 6.f, Theme::kPhotoFrame * 0.6f);
+    Theme::fx::glowStroke (g, L::keyPhoto.reduced (Theme::kPhotoFrame * 0.5f), 6.f, Theme::kMagenta, Theme::kPhotoFrame * 0.6f, 1.f);
 
     // range
-    text (g, Theme::kRange, L::rangeLabel, 26);
+    heading (g, Theme::kRange, L::rangeLabel, 26);
 
     // alt yazılar
     text (g, Theme::kFootLeft, L::footLeft, 10, Justification::centredLeft);
